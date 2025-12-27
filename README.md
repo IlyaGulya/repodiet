@@ -2,7 +2,7 @@
 
 A terminal-based Git repository history analyzer that helps you find and visualize storage bloat. Analyzes your repository's HEAD to show cumulative historical sizes vs current sizes, helping identify files that have grown over time or been deleted but still consume space in Git history.
 
-![Rust](https://img.shields.io/badge/rust-2021-orange)
+![Rust](https://img.shields.io/badge/rust-2024-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 <!-- TODO: Add screenshot -->
@@ -132,7 +132,7 @@ Full-text search across all paths in repository history.
 
 ### Prerequisites
 
-- Rust 1.70+ (install via [rustup](https://rustup.rs/))
+- Rust 1.85+ (install via [rustup](https://rustup.rs/))
 - Git (for cloning)
 
 Dependencies are automatically handled by Cargo:

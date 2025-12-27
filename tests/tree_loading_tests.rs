@@ -26,7 +26,7 @@ async fn test_tree_hierarchy_from_db() {
         ("oid4".to_string(), "tests/test.rs".to_string(), 75i64, 75i64),
         ("oid5".to_string(), "README.md".to_string(), 25i64, 25i64),
     ];
-    db.save_blobs(&blobs).await.unwrap();
+    db.save_blobs(&blobs, None).await.unwrap();
 
     let tree = db.load_tree().await.unwrap();
 
@@ -56,7 +56,7 @@ async fn test_size_aggregation_on_load() {
         ("oid2".to_string(), "src/b.rs".to_string(), 200i64, 100i64),
         ("oid3".to_string(), "src/sub/c.rs".to_string(), 300i64, 150i64),
     ];
-    db.save_blobs(&blobs).await.unwrap();
+    db.save_blobs(&blobs, None).await.unwrap();
 
     let tree = db.load_tree().await.unwrap();
 
@@ -85,7 +85,7 @@ async fn test_deleted_files_marked() {
         ("oid2".to_string(), "deleted.txt".to_string(), 200i64, 0i64),
         ("oid3".to_string(), "src/also_deleted.rs".to_string(), 300i64, 0i64),
     ];
-    db.save_blobs(&blobs).await.unwrap();
+    db.save_blobs(&blobs, None).await.unwrap();
 
     let tree = db.load_tree().await.unwrap();
 
@@ -118,7 +118,7 @@ async fn test_extension_stats_from_tree() {
         ("oid5".to_string(), "README.md".to_string(), 50i64, 50i64),
         ("oid6".to_string(), "Makefile".to_string(), 25i64, 25i64), // No extension
     ];
-    db.save_blobs(&blobs).await.unwrap();
+    db.save_blobs(&blobs, None).await.unwrap();
 
     let tree = db.load_tree().await.unwrap();
 
