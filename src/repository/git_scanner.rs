@@ -92,7 +92,7 @@ impl GitScanner {
         }
         let phase_start = Instant::now();
         let head_tree = head.tree()?;
-        let mut current_path_blobs: FxHashMap<String, (String, i64)> = FxHashMap::default();
+        let mut current_path_blobs: FxHashMap<String, (Oid, i64)> = FxHashMap::default();
         head_tree.walk(git2::TreeWalkMode::PreOrder, |dir, entry| {
             if entry.kind() == Some(ObjectType::Blob) {
                 let path = if dir.is_empty() {
@@ -100,9 +100,9 @@ impl GitScanner {
                 } else {
                     format!("{}{}", dir, entry.name().unwrap_or(""))
                 };
-                let oid_hex = entry.id().to_string();
-                let size = get_compressed_size(&oid_hex, &compressed_sizes, &git_dir);
-                current_path_blobs.insert(path, (oid_hex, size));
+                let oid = entry.id();
+                let size = get_compressed_size_by_oid(oid, &compressed_sizes, &git_dir);
+                current_path_blobs.insert(path, (oid, size));
             }
             git2::TreeWalkResult::Ok
         })?;
@@ -163,17 +163,22 @@ impl GitScanner {
 
         // Load already-seen blobs into memory for fast lookup
         let phase_start = Instant::now();
-        let mut seen_blobs = db.load_seen_blobs().await?;
+        let seen_blob_strings = db.load_seen_blobs().await?;
+        // Convert to Oid for faster lookups (avoids string allocations in hot loop)
+        let mut seen_blobs: FxHashSet<Oid> = seen_blob_strings
+            .iter()
+            .filter_map(|s| Oid::from_str(s).ok())
+            .collect();
         if self.profile {
             eprintln!("[PROFILE] Load seen blobs ({} blobs): {:?}", seen_blobs.len(), phase_start.elapsed());
         } else if self.verbose {
             eprintln!("Loaded {} previously seen blobs", seen_blobs.len());
         }
 
-        let mut seen_trees: FxHashSet<(String, String)> = FxHashSet::default();
-        let mut new_blobs: Vec<(String, String, i64, i64)> = Vec::new();
-        let mut new_blob_metadata: Vec<(String, i64, String, String, i64)> = Vec::new();
-        let mut seen_path_blobs: FxHashSet<(String, String)> = FxHashSet::default();
+        let mut seen_trees: FxHashSet<(Oid, String)> = FxHashSet::default();
+        let mut new_blobs: Vec<(Oid, String, i64, i64)> = Vec::new();
+        let mut new_blob_metadata: Vec<(Oid, i64, String, String, i64)> = Vec::new();
+        let mut seen_path_blobs: FxHashSet<(String, Oid)> = FxHashSet::default();
 
         let phase_start = Instant::now();
         for oid in &commits_to_scan {
@@ -233,8 +238,13 @@ impl GitScanner {
                 pb2.set_draw_target(indicatif::ProgressDrawTarget::hidden());
             }
 
+            // Convert Oid to String for DB storage
+            let blobs_for_db: Vec<(String, String, i64, i64)> = new_blobs
+                .iter()
+                .map(|(oid, path, cum, cur)| (oid.to_string(), path.clone(), *cum, *cur))
+                .collect();
             let phase_start = Instant::now();
-            db.save_blobs(&new_blobs, Some(&pb2)).await?;
+            db.save_blobs(&blobs_for_db, Some(&pb2)).await?;
             pb2.finish_and_clear();
             if self.profile {
                 eprintln!("[PROFILE] Save blobs to DB: {:?}", phase_start.elapsed());
@@ -252,8 +262,13 @@ impl GitScanner {
                 } else {
                     pb3.set_draw_target(indicatif::ProgressDrawTarget::hidden());
                 }
+                // Convert Oid to String for DB storage
+                let metadata_for_db: Vec<(String, i64, String, String, i64)> = new_blob_metadata
+                    .iter()
+                    .map(|(oid, size, path, author, date)| (oid.to_string(), *size, path.clone(), author.clone(), *date))
+                    .collect();
                 let phase_start = Instant::now();
-                db.save_blob_metadata(&new_blob_metadata, Some(&pb3)).await?;
+                db.save_blob_metadata(&metadata_for_db, Some(&pb3)).await?;
                 pb3.finish_and_clear();
                 if self.profile {
                     eprintln!("[PROFILE] Save blob metadata to DB: {:?}", phase_start.elapsed());
@@ -291,18 +306,18 @@ fn scan_tree_recursive(
     repo: &Repository,
     tree_oid: Oid,
     path: &str,
-    seen_trees: &mut FxHashSet<(String, String)>,
-    seen_blobs: &mut FxHashSet<String>,
-    seen_path_blobs: &mut FxHashSet<(String, String)>,
-    current_path_blobs: &FxHashMap<String, (String, i64)>,
-    new_blobs: &mut Vec<(String, String, i64, i64)>,
-    new_blob_metadata: &mut Vec<(String, i64, String, String, i64)>,
-    compressed_sizes: &FxHashMap<String, u64>,
+    seen_trees: &mut FxHashSet<(Oid, String)>,
+    seen_blobs: &mut FxHashSet<Oid>,
+    seen_path_blobs: &mut FxHashSet<(String, Oid)>,
+    current_path_blobs: &FxHashMap<String, (Oid, i64)>,
+    new_blobs: &mut Vec<(Oid, String, i64, i64)>,
+    new_blob_metadata: &mut Vec<(Oid, i64, String, String, i64)>,
+    compressed_sizes: &FxHashMap<Oid, u64>,
     git_dir: &Path,
     commit_author: &str,
     commit_date: i64,
 ) {
-    let key = (tree_oid.to_string(), path.to_string());
+    let key = (tree_oid, path.to_string());
     if !seen_trees.insert(key) {
         return;
     }
@@ -322,24 +337,24 @@ fn scan_tree_recursive(
 
         match entry.kind() {
             Some(ObjectType::Blob) => {
-                let blob_oid = entry.id().to_string();
-                let path_blob_key = (entry_path.clone(), blob_oid.clone());
+                let blob_oid = entry.id();
+                let path_blob_key = (entry_path.clone(), blob_oid);
 
                 if !seen_path_blobs.insert(path_blob_key) {
                     continue;
                 }
 
-                let is_new_blob = seen_blobs.insert(blob_oid.clone());
-                let size = get_compressed_size(&blob_oid, compressed_sizes, git_dir);
+                let is_new_blob = seen_blobs.insert(blob_oid);
+                let size = get_compressed_size_by_oid(blob_oid, compressed_sizes, git_dir);
 
                 let current_size = current_path_blobs
                     .get(&entry_path)
-                    .filter(|(head_oid, _)| head_oid == &blob_oid)
+                    .filter(|(head_oid, _)| *head_oid == blob_oid)
                     .map(|(_, s)| *s)
                     .unwrap_or(0);
 
                 if is_new_blob {
-                    new_blobs.push((blob_oid.clone(), entry_path.clone(), size, current_size));
+                    new_blobs.push((blob_oid, entry_path.clone(), size, current_size));
                     new_blob_metadata.push((blob_oid, size, entry_path, commit_author.to_string(), commit_date));
                 } else if current_size > 0 {
                     new_blobs.push((blob_oid, entry_path, 0, current_size));
@@ -371,7 +386,7 @@ fn scan_tree_recursive(
 fn load_pack_compressed_sizes(
     idx_path: &Path,
     pack_path: &Path,
-) -> Result<FxHashMap<String, u64>> {
+) -> Result<FxHashMap<Oid, u64>> {
     let hash_kind = HashKind::Sha1;
 
     let idx = index::File::at(idx_path, hash_kind)?;
@@ -390,15 +405,17 @@ fn load_pack_compressed_sizes(
             .unwrap_or(pack_end);
 
         let entry_size = entry_end - entry.pack_offset;
-        let oid_hex = entry.oid.to_hex().to_string();
-        sizes.insert(oid_hex, entry_size);
+        // Convert gix ObjectId to git2 Oid (both are 20-byte SHA1)
+        if let Ok(oid) = Oid::from_bytes(entry.oid.as_bytes()) {
+            sizes.insert(oid, entry_size);
+        }
     }
 
     Ok(sizes)
 }
 
 /// Load compressed sizes from all pack files in .git/objects/pack/
-fn load_all_compressed_sizes(git_dir: &Path) -> FxHashMap<String, u64> {
+fn load_all_compressed_sizes(git_dir: &Path) -> FxHashMap<Oid, u64> {
     let mut all_sizes = FxHashMap::default();
     let pack_dir = git_dir.join("objects/pack");
 
@@ -425,27 +442,25 @@ fn load_all_compressed_sizes(git_dir: &Path) -> FxHashMap<String, u64> {
 }
 
 /// Get compressed size for a loose object by reading file size
-fn get_loose_object_size(git_dir: &Path, oid_hex: &str) -> Option<u64> {
-    if oid_hex.len() < 3 {
-        return None;
-    }
+fn get_loose_object_size_by_oid(git_dir: &Path, oid: Oid) -> Option<u64> {
+    let hex = oid.to_string();
     let path = git_dir
         .join("objects")
-        .join(&oid_hex[..2])
-        .join(&oid_hex[2..]);
+        .join(&hex[..2])
+        .join(&hex[2..]);
     std::fs::metadata(&path).ok().map(|m| m.len())
 }
 
-/// Get compressed (on-disk) size for a blob
-fn get_compressed_size(
-    oid_hex: &str,
-    compressed_sizes: &FxHashMap<String, u64>,
+/// Get compressed (on-disk) size for a blob using Oid directly
+fn get_compressed_size_by_oid(
+    oid: Oid,
+    compressed_sizes: &FxHashMap<Oid, u64>,
     git_dir: &Path,
 ) -> i64 {
-    if let Some(&size) = compressed_sizes.get(oid_hex) {
+    if let Some(&size) = compressed_sizes.get(&oid) {
         return size as i64;
     }
-    if let Some(size) = get_loose_object_size(git_dir, oid_hex) {
+    if let Some(size) = get_loose_object_size_by_oid(git_dir, oid) {
         return size as i64;
     }
     0
