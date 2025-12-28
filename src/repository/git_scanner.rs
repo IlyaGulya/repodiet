@@ -173,7 +173,6 @@ impl GitScanner {
         // Load already-seen blobs into memory for fast lookup
         let phase_start = Instant::now();
         let seen_blob_strings = db.load_seen_blobs().await?;
-        // Convert to ObjectId for faster lookups
         let mut seen_blobs: FxHashSet<ObjectId> = seen_blob_strings
             .iter()
             .filter_map(|s| ObjectId::from_hex(s.as_bytes()).ok())
@@ -203,13 +202,11 @@ impl GitScanner {
             };
 
             let tree_id = commit.tree();
-            // Get author info - now returns Result in gix 0.76+
             let author_sig = match commit.author() {
                 Ok(sig) => sig,
                 Err(_) => continue,
             };
             let commit_author = author_sig.name.to_string();
-            // Use seconds() method to parse the time string
             let commit_date = author_sig.seconds();
 
             scan_tree_recursive_gix(
@@ -338,7 +335,6 @@ fn scan_tree_recursive_gix<S: Find>(
         return;
     }
 
-    // Find and decode the tree
     let mut buf = Vec::new();
     let tree = match odb.find_tree(&tree_oid, &mut buf) {
         Ok(t) => t,
