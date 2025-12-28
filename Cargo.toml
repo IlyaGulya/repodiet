@@ -14,7 +14,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
 dirs = "6"
-# For compressed (on-disk) size extraction from pack files
+gix = { version = "0.76.0", default-features = false, features = ["max-performance-safe"] }
 gix-pack = "0.63"
 gix-hash = "0.21"
 rustc-hash = "2"
