@@ -1,6 +1,7 @@
 // Git scanner benchmarks
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 use criterion::async_executor::AsyncExecutor;
 use repodiet::repository::{Database, GitScanner};
 use tokio::runtime::Runtime;

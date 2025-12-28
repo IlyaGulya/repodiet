@@ -17,6 +17,7 @@ dirs = "6"
 # For compressed (on-disk) size extraction from pack files
 gix-pack = "0.63"
 gix-hash = "0.21"
+rustc-hash = "2"
 
 [dev-dependencies]
 tempfile = "3"
@@ -41,3 +42,4 @@ harness = false
 [profile.release]
 opt-level = 3
 lto = true
+debug = "line-tables-only"

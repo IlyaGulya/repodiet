@@ -3,8 +3,9 @@ use git2::{ObjectType, Oid, Repository};
 use gix_hash::Kind as HashKind;
 use gix_pack::{data, index};
 use indicatif::{ProgressBar, ProgressStyle};
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::model::TreeNode;
 use super::Database;
@@ -13,6 +14,7 @@ use super::Database;
 pub struct GitScanner {
     repo_path: PathBuf,
     verbose: bool,
+    profile: bool,
 }
 
 impl GitScanner {
@@ -20,6 +22,7 @@ impl GitScanner {
         Self {
             repo_path: PathBuf::from(repo_path),
             verbose: true,
+            profile: false,
         }
     }
 
@@ -29,20 +32,36 @@ impl GitScanner {
         Self {
             repo_path: PathBuf::from(repo_path),
             verbose: false,
+            profile: false,
+        }
+    }
+
+    /// Create a profiling scanner (detailed timing output)
+    pub fn profiling(repo_path: &str) -> Self {
+        Self {
+            repo_path: PathBuf::from(repo_path),
+            verbose: true,
+            profile: true,
         }
     }
 
     /// Scan repository and return tree, using database for caching
     pub async fn scan(&self, db: &Database) -> Result<TreeNode> {
+        let total_start = Instant::now();
+
         if self.verbose {
             eprintln!("Opening repository at: {}", self.repo_path.display());
         }
+        let phase_start = Instant::now();
         let repo = Repository::open(&self.repo_path)
             .context("Failed to open git repository")?;
 
         // Get current HEAD
         let head = repo.head()?.peel_to_commit()?;
         let head_oid = head.id().to_string();
+        if self.profile {
+            eprintln!("[PROFILE] Open repo + get HEAD: {:?}", phase_start.elapsed());
+        }
 
         // Check if we have a cached index
         let cached_head = db.get_metadata("head_oid").await;
@@ -59,8 +78,11 @@ impl GitScanner {
         if self.verbose {
             eprintln!("Loading compressed sizes from pack files...");
         }
+        let phase_start = Instant::now();
         let compressed_sizes = load_all_compressed_sizes(&git_dir);
-        if self.verbose {
+        if self.profile {
+            eprintln!("[PROFILE] Load pack sizes ({} objects): {:?}", compressed_sizes.len(), phase_start.elapsed());
+        } else if self.verbose {
             eprintln!("Loaded compressed sizes for {} objects", compressed_sizes.len());
         }
 
@@ -68,8 +90,9 @@ impl GitScanner {
         if self.verbose {
             eprintln!("Scanning current HEAD for working tree...");
         }
+        let phase_start = Instant::now();
         let head_tree = head.tree()?;
-        let mut current_path_blobs: HashMap<String, (String, i64)> = HashMap::new();
+        let mut current_path_blobs: FxHashMap<String, (String, i64)> = FxHashMap::default();
         head_tree.walk(git2::TreeWalkMode::PreOrder, |dir, entry| {
             if entry.kind() == Some(ObjectType::Blob) {
                 let path = if dir.is_empty() {
@@ -83,7 +106,9 @@ impl GitScanner {
             }
             git2::TreeWalkResult::Ok
         })?;
-        if self.verbose {
+        if self.profile {
+            eprintln!("[PROFILE] Scan HEAD tree ({} files): {:?}", current_path_blobs.len(), phase_start.elapsed());
+        } else if self.verbose {
             eprintln!("Found {} files in current HEAD", current_path_blobs.len());
         }
 
@@ -91,22 +116,30 @@ impl GitScanner {
         if self.verbose {
             eprintln!("Collecting commits...");
         }
+        let phase_start = Instant::now();
         let mut revwalk = repo.revwalk()?;
         revwalk.push_head()?;
         revwalk.set_sorting(git2::Sort::TIME | git2::Sort::REVERSE)?;
         let all_commits: Vec<Oid> = revwalk.filter_map(|r| r.ok()).collect();
-        if self.verbose {
+        if self.profile {
+            eprintln!("[PROFILE] Revwalk ({} commits): {:?}", all_commits.len(), phase_start.elapsed());
+        } else if self.verbose {
             eprintln!("Found {} total commits", all_commits.len());
         }
 
-        // Filter to unscanned commits
+        // Filter to unscanned commits (bulk load for speed)
+        let phase_start = Instant::now();
+        let scanned_commits = db.load_scanned_commit_oids().await;
         let mut commits_to_scan = Vec::new();
         for oid in &all_commits {
-            if !db.is_commit_scanned(&oid.to_string()).await {
+            if !scanned_commits.contains(&oid.to_string()) {
                 commits_to_scan.push(*oid);
             }
         }
-        if self.verbose {
+        if self.profile {
+            eprintln!("[PROFILE] Filter unscanned ({} of {} need scanning, {} cached): {:?}",
+                commits_to_scan.len(), all_commits.len(), scanned_commits.len(), phase_start.elapsed());
+        } else if self.verbose {
             eprintln!("{} commits need scanning", commits_to_scan.len());
         }
 
@@ -117,7 +150,7 @@ impl GitScanner {
 
         // Scan new commits
         let pb = ProgressBar::new(commits_to_scan.len() as u64);
-        if self.verbose {
+        if self.verbose && !self.profile {
             pb.set_style(
                 ProgressStyle::default_bar()
                     .template("{spinner:.green} Scanning: [{bar:50.cyan/blue}] {pos}/{len} ({per_sec})")
@@ -129,16 +162,20 @@ impl GitScanner {
         }
 
         // Load already-seen blobs into memory for fast lookup
+        let phase_start = Instant::now();
         let mut seen_blobs = db.load_seen_blobs().await?;
-        if self.verbose {
+        if self.profile {
+            eprintln!("[PROFILE] Load seen blobs ({} blobs): {:?}", seen_blobs.len(), phase_start.elapsed());
+        } else if self.verbose {
             eprintln!("Loaded {} previously seen blobs", seen_blobs.len());
         }
 
-        let mut seen_trees: HashSet<(String, String)> = HashSet::new();
+        let mut seen_trees: FxHashSet<(String, String)> = FxHashSet::default();
         let mut new_blobs: Vec<(String, String, i64, i64)> = Vec::new();
         let mut new_blob_metadata: Vec<(String, i64, String, String, i64)> = Vec::new();
-        let mut seen_path_blobs: HashSet<(String, String)> = HashSet::new();
+        let mut seen_path_blobs: FxHashSet<(String, String)> = FxHashSet::default();
 
+        let phase_start = Instant::now();
         for oid in &commits_to_scan {
             pb.inc(1);
 
@@ -172,7 +209,10 @@ impl GitScanner {
         }
 
         pb.finish_and_clear();
-        if self.verbose {
+        if self.profile {
+            eprintln!("[PROFILE] Scan {} commits (found {} new blobs, {} trees visited): {:?}",
+                commits_to_scan.len(), new_blobs.len(), seen_trees.len(), phase_start.elapsed());
+        } else if self.verbose {
             eprintln!("Found {} new blobs to index", new_blobs.len());
         }
 
@@ -182,7 +222,7 @@ impl GitScanner {
                 eprintln!("Updating database...");
             }
             let pb2 = ProgressBar::new(new_blobs.len() as u64);
-            if self.verbose {
+            if self.verbose && !self.profile {
                 pb2.set_style(
                     ProgressStyle::default_bar()
                         .template("{spinner:.green} Indexing: [{bar:50.cyan/blue}] {pos}/{len}")
@@ -193,12 +233,16 @@ impl GitScanner {
                 pb2.set_draw_target(indicatif::ProgressDrawTarget::hidden());
             }
 
+            let phase_start = Instant::now();
             db.save_blobs(&new_blobs, Some(&pb2)).await?;
             pb2.finish_and_clear();
+            if self.profile {
+                eprintln!("[PROFILE] Save blobs to DB: {:?}", phase_start.elapsed());
+            }
 
             if !new_blob_metadata.is_empty() {
                 let pb3 = ProgressBar::new(new_blob_metadata.len() as u64);
-                if self.verbose {
+                if self.verbose && !self.profile {
                     pb3.set_style(
                         ProgressStyle::default_bar()
                             .template("{spinner:.green} Indexing metadata: [{bar:50.cyan/blue}] {pos}/{len}")
@@ -208,21 +252,38 @@ impl GitScanner {
                 } else {
                     pb3.set_draw_target(indicatif::ProgressDrawTarget::hidden());
                 }
+                let phase_start = Instant::now();
                 db.save_blob_metadata(&new_blob_metadata, Some(&pb3)).await?;
                 pb3.finish_and_clear();
+                if self.profile {
+                    eprintln!("[PROFILE] Save blob metadata to DB: {:?}", phase_start.elapsed());
+                }
             }
 
             // Mark commits as scanned
+            let phase_start = Instant::now();
             let commit_oids: Vec<String> = commits_to_scan.iter().map(|o| o.to_string()).collect();
             db.mark_commits_scanned(&commit_oids).await?;
+            if self.profile {
+                eprintln!("[PROFILE] Mark commits scanned: {:?}", phase_start.elapsed());
+            }
         }
 
         db.set_metadata("head_oid", &head_oid).await?;
 
+        if self.profile {
+            eprintln!("[PROFILE] TOTAL scanning time: {:?}", total_start.elapsed());
+        }
+
         if self.verbose {
             eprintln!("Loading tree from database...");
         }
-        db.load_tree().await
+        let phase_start = Instant::now();
+        let tree = db.load_tree().await;
+        if self.profile {
+            eprintln!("[PROFILE] Load tree from DB: {:?}", phase_start.elapsed());
+        }
+        tree
     }
 }
 
@@ -230,13 +291,13 @@ fn scan_tree_recursive(
     repo: &Repository,
     tree_oid: Oid,
     path: &str,
-    seen_trees: &mut HashSet<(String, String)>,
-    seen_blobs: &mut HashSet<String>,
-    seen_path_blobs: &mut HashSet<(String, String)>,
-    current_path_blobs: &HashMap<String, (String, i64)>,
+    seen_trees: &mut FxHashSet<(String, String)>,
+    seen_blobs: &mut FxHashSet<String>,
+    seen_path_blobs: &mut FxHashSet<(String, String)>,
+    current_path_blobs: &FxHashMap<String, (String, i64)>,
     new_blobs: &mut Vec<(String, String, i64, i64)>,
     new_blob_metadata: &mut Vec<(String, i64, String, String, i64)>,
-    compressed_sizes: &HashMap<String, u64>,
+    compressed_sizes: &FxHashMap<String, u64>,
     git_dir: &Path,
     commit_author: &str,
     commit_date: i64,
@@ -310,7 +371,7 @@ fn scan_tree_recursive(
 fn load_pack_compressed_sizes(
     idx_path: &Path,
     pack_path: &Path,
-) -> Result<HashMap<String, u64>> {
+) -> Result<FxHashMap<String, u64>> {
     let hash_kind = HashKind::Sha1;
 
     let idx = index::File::at(idx_path, hash_kind)?;
@@ -320,7 +381,8 @@ fn load_pack_compressed_sizes(
     entries.sort_by_key(|e| e.pack_offset);
 
     let pack_end = pack.pack_end() as u64;
-    let mut sizes = HashMap::new();
+    let mut sizes = FxHashMap::default();
+    sizes.reserve(entries.len());
 
     for (i, entry) in entries.iter().enumerate() {
         let entry_end = entries.get(i + 1)
@@ -336,8 +398,8 @@ fn load_pack_compressed_sizes(
 }
 
 /// Load compressed sizes from all pack files in .git/objects/pack/
-fn load_all_compressed_sizes(git_dir: &Path) -> HashMap<String, u64> {
-    let mut all_sizes = HashMap::new();
+fn load_all_compressed_sizes(git_dir: &Path) -> FxHashMap<String, u64> {
+    let mut all_sizes = FxHashMap::default();
     let pack_dir = git_dir.join("objects/pack");
 
     if let Ok(entries) = std::fs::read_dir(&pack_dir) {
@@ -377,7 +439,7 @@ fn get_loose_object_size(git_dir: &Path, oid_hex: &str) -> Option<u64> {
 /// Get compressed (on-disk) size for a blob
 fn get_compressed_size(
     oid_hex: &str,
-    compressed_sizes: &HashMap<String, u64>,
+    compressed_sizes: &FxHashMap<String, u64>,
     git_dir: &Path,
 ) -> i64 {
     if let Some(&size) = compressed_sizes.get(oid_hex) {

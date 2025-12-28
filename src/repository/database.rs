@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use indicatif::ProgressBar;
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Row, Sqlite};
+use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, Pool, Row, Sqlite};
+use std::str::FromStr;
 
 use crate::model::{LargeBlobInfo, TreeNode};
 
@@ -14,9 +15,16 @@ pub struct Database {
 impl Database {
     /// Create a new database connection
     pub async fn new(db_path: &str) -> Result<Self> {
+        // Configure connection options with PRAGMAs applied to every connection
+        let options = SqliteConnectOptions::from_str(&format!("sqlite:{}?mode=rwc", db_path))?
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
+            .pragma("temp_store", "MEMORY")
+            .pragma("cache_size", "-64000"); // 64MB cache
+
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect(&format!("sqlite:{}?mode=rwc", db_path))
+            .connect_with(options)
             .await
             .context("Failed to connect to database")?;
 
@@ -46,7 +54,9 @@ impl Database {
                 eprintln!("Schema version changed ({} -> {}), rebuilding index...",
                     stored_version.unwrap_or_default(), SCHEMA_VERSION);
             }
-            // Drop and recreate all tables
+            // Drop and recreate all tables (including old normalized tables if they exist)
+            sqlx::query("DROP TABLE IF EXISTS path_stats").execute(&self.pool).await?;
+            sqlx::query("DROP TABLE IF EXISTS path_lookup").execute(&self.pool).await?;
             sqlx::query("DROP TABLE IF EXISTS paths").execute(&self.pool).await?;
             sqlx::query("DROP TABLE IF EXISTS seen_blobs").execute(&self.pool).await?;
             sqlx::query("DROP TABLE IF EXISTS scanned_commits").execute(&self.pool).await?;
@@ -54,7 +64,7 @@ impl Database {
             sqlx::query("DELETE FROM metadata").execute(&self.pool).await?;
         }
 
-        // Create tables
+        // Create tables - simple schema without normalization for performance
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS paths (
                 path TEXT PRIMARY KEY,
@@ -76,7 +86,6 @@ impl Database {
             )"
         ).execute(&self.pool).await?;
 
-        // New table for blob metadata (for large blob detection)
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS blobs (
                 oid TEXT PRIMARY KEY,
@@ -161,7 +170,8 @@ impl Database {
         }).collect())
     }
 
-    /// Check if a commit has been scanned
+    /// Check if a commit has been scanned (used by tests)
+    #[allow(dead_code)]
     pub async fn is_commit_scanned(&self, oid: &str) -> bool {
         sqlx::query("SELECT 1 FROM scanned_commits WHERE oid = ?")
             .bind(oid)
@@ -172,24 +182,48 @@ impl Database {
             .is_some()
     }
 
+    /// Load all scanned commit OIDs into a HashSet for fast lookup
+    pub async fn load_scanned_commit_oids(&self) -> rustc_hash::FxHashSet<String> {
+        sqlx::query_scalar("SELECT oid FROM scanned_commits")
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
+    }
+
     /// Load all previously seen blob OIDs
-    pub async fn load_seen_blobs(&self) -> Result<std::collections::HashSet<String>> {
+    pub async fn load_seen_blobs(&self) -> Result<rustc_hash::FxHashSet<String>> {
         let rows = sqlx::query("SELECT oid FROM seen_blobs")
             .fetch_all(&self.pool)
             .await?;
         Ok(rows.iter().map(|row| row.get::<String, _>("oid")).collect())
     }
 
-    /// Save batch of new blobs
+    /// Save batch of new blobs using multi-row INSERT for speed
     pub async fn save_blobs(&self, blobs: &[(String, String, i64, i64)], progress: Option<&ProgressBar>) -> Result<()> {
-        for chunk in blobs.chunks(1000) {
-            let mut tx = self.pool.begin().await?;
-            for (oid, path, cumulative, current) in chunk {
-                sqlx::query("INSERT OR IGNORE INTO seen_blobs (oid) VALUES (?)")
-                    .bind(oid)
-                    .execute(&mut *tx)
-                    .await?;
+        const BATCH_SIZE: usize = 5000;
 
+        // Use a single transaction for all batches
+        let mut tx = self.pool.begin().await?;
+
+        for chunk in blobs.chunks(BATCH_SIZE) {
+            // Multi-row INSERT for seen_blobs
+            if !chunk.is_empty() {
+                let placeholders: Vec<&str> = vec!["(?)"; chunk.len()];
+                let sql = format!(
+                    "INSERT OR IGNORE INTO seen_blobs (oid) VALUES {}",
+                    placeholders.join(", ")
+                );
+                let mut query = sqlx::query(&sql);
+                for (oid, _, _, _) in chunk {
+                    query = query.bind(oid);
+                }
+                query.execute(&mut *tx).await?;
+            }
+
+            // paths table needs individual upserts due to complex ON CONFLICT logic
+            for (_, path, cumulative, current) in chunk {
                 sqlx::query(
                     "INSERT INTO paths (path, cumulative_size, current_size, blob_count) VALUES (?, ?, ?, 1)
                      ON CONFLICT(path) DO UPDATE SET
@@ -203,47 +237,75 @@ impl Database {
                 .execute(&mut *tx)
                 .await?;
             }
-            tx.commit().await?;
+
             if let Some(pb) = progress {
                 pb.inc(chunk.len() as u64);
             }
         }
+
+        tx.commit().await?;
         Ok(())
     }
 
-    /// Save blob metadata for large blob detection
+    /// Save blob metadata for large blob detection using multi-row INSERT
     pub async fn save_blob_metadata(&self, metadata: &[(String, i64, String, String, i64)], progress: Option<&ProgressBar>) -> Result<()> {
-        for chunk in metadata.chunks(1000) {
-            let mut tx = self.pool.begin().await?;
-            for (oid, size, path, author, date) in chunk {
-                sqlx::query(
-                    "INSERT OR IGNORE INTO blobs (oid, size, path, first_author, first_date) VALUES (?, ?, ?, ?, ?)"
-                )
-                .bind(oid)
-                .bind(size)
-                .bind(path)
-                .bind(author)
-                .bind(date)
-                .execute(&mut *tx)
-                .await?;
+        const BATCH_SIZE: usize = 5000;
+
+        // Use a single transaction for all batches
+        let mut tx = self.pool.begin().await?;
+
+        for chunk in metadata.chunks(BATCH_SIZE) {
+            if chunk.is_empty() {
+                continue;
             }
-            tx.commit().await?;
+
+            // Build multi-row INSERT: VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?), ...
+            let placeholders: Vec<&str> = vec!["(?, ?, ?, ?, ?)"; chunk.len()];
+            let sql = format!(
+                "INSERT OR IGNORE INTO blobs (oid, size, path, first_author, first_date) VALUES {}",
+                placeholders.join(", ")
+            );
+
+            let mut query = sqlx::query(&sql);
+            for (oid, size, path, author, date) in chunk {
+                query = query.bind(oid).bind(size).bind(path).bind(author).bind(date);
+            }
+            query.execute(&mut *tx).await?;
+
             if let Some(pb) = progress {
                 pb.inc(chunk.len() as u64);
             }
         }
+
+        tx.commit().await?;
         Ok(())
     }
 
-    /// Mark commits as scanned
+    /// Mark commits as scanned using multi-row INSERT
     pub async fn mark_commits_scanned(&self, oids: &[String]) -> Result<()> {
+        const BATCH_SIZE: usize = 5000;
+
+        // Use a single transaction for all batches
         let mut tx = self.pool.begin().await?;
-        for oid in oids {
-            sqlx::query("INSERT OR IGNORE INTO scanned_commits (oid) VALUES (?)")
-                .bind(oid)
-                .execute(&mut *tx)
-                .await?;
+
+        for chunk in oids.chunks(BATCH_SIZE) {
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let placeholders: Vec<&str> = vec!["(?)"; chunk.len()];
+            let sql = format!(
+                "INSERT OR IGNORE INTO scanned_commits (oid) VALUES {}",
+                placeholders.join(", ")
+            );
+
+            let mut query = sqlx::query(&sql);
+            for oid in chunk {
+                query = query.bind(oid);
+            }
+            query.execute(&mut *tx).await?;
         }
+
         tx.commit().await?;
         Ok(())
     }
