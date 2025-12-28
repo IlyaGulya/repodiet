@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use gix_hash::Kind as HashKind;
+use gix::bstr::BString;
 use gix::prelude::{Find, FindExt};
 use gix::ObjectId;
 use gix_pack::{data, index};
@@ -10,6 +11,32 @@ use std::time::Instant;
 
 use crate::model::TreeNode;
 use super::Database;
+
+/// Path interner to avoid allocating String for every path during tree traversal.
+/// Maps paths to u32 IDs for compact storage in HashSets.
+#[derive(Default)]
+struct PathInterner {
+    map: FxHashMap<BString, u32>,
+    vec: Vec<BString>,
+}
+
+impl PathInterner {
+    fn intern(&mut self, bytes: &[u8]) -> u32 {
+        // Check if already interned
+        if let Some(&id) = self.map.get(bytes) {
+            return id;
+        }
+        let id = self.vec.len() as u32;
+        let owned = BString::from(bytes);
+        self.map.insert(owned.clone(), id);
+        self.vec.push(owned);
+        id
+    }
+
+    fn get_str(&self, id: u32) -> String {
+        String::from_utf8_lossy(self.vec[id as usize].as_ref()).into_owned()
+    }
+}
 
 /// Git repository scanner for extracting history statistics
 pub struct GitScanner {
@@ -94,7 +121,9 @@ impl GitScanner {
         }
         let phase_start = Instant::now();
         let head_tree = head_commit.tree().context("Failed to get HEAD tree")?;
-        let mut current_path_blobs: FxHashMap<String, (ObjectId, i64)> = FxHashMap::default();
+
+        let mut path_interner = PathInterner::default();
+        let mut current_path_blobs: FxHashMap<u32, (ObjectId, i64)> = FxHashMap::default();
 
         // Use gix's tree traversal
         let mut recorder = gix::traverse::tree::Recorder::default();
@@ -102,9 +131,9 @@ impl GitScanner {
 
         for entry in recorder.records {
             if entry.mode.is_blob() {
-                let path = String::from_utf8_lossy(entry.filepath.as_ref()).to_string();
+                let path_id = path_interner.intern(entry.filepath.as_ref());
                 let size = get_compressed_size_by_oid(entry.oid, &compressed_sizes, &git_dir);
-                current_path_blobs.insert(path, (entry.oid, size));
+                current_path_blobs.insert(path_id, (entry.oid, size));
             }
         }
 
@@ -183,10 +212,11 @@ impl GitScanner {
             eprintln!("Loaded {} previously seen blobs", seen_blobs.len());
         }
 
-        let mut seen_trees: FxHashSet<(ObjectId, String)> = FxHashSet::default();
-        let mut new_blobs: Vec<(ObjectId, String, i64, i64)> = Vec::new();
-        let mut new_blob_metadata: Vec<(ObjectId, i64, String, String, i64)> = Vec::new();
-        let mut seen_path_blobs: FxHashSet<(String, ObjectId)> = FxHashSet::default();
+        let mut seen_trees: FxHashSet<(ObjectId, u32)> = FxHashSet::default();
+        let mut new_blobs: Vec<(ObjectId, u32, i64, i64)> = Vec::new();
+        let mut new_blob_metadata: Vec<(ObjectId, i64, u32, String, i64)> = Vec::new();
+        let mut seen_path_blobs: FxHashSet<(u32, ObjectId)> = FxHashSet::default();
+        let mut path_buf: Vec<u8> = Vec::with_capacity(256);
 
         // Get the object database for direct lookups
         let odb = repo.objects.clone();
@@ -209,10 +239,12 @@ impl GitScanner {
             let commit_author = author_sig.name.to_string();
             let commit_date = author_sig.seconds();
 
+            path_buf.clear();
             scan_tree_recursive_gix(
                 &odb,
                 tree_id,
-                "",
+                &mut path_buf,
+                &mut path_interner,
                 &mut seen_trees,
                 &mut seen_blobs,
                 &mut seen_path_blobs,
@@ -251,10 +283,10 @@ impl GitScanner {
                 pb2.set_draw_target(indicatif::ProgressDrawTarget::hidden());
             }
 
-            // Convert ObjectId to String for DB storage
+            // Convert ObjectId and path ID to String for DB storage
             let blobs_for_db: Vec<(String, String, i64, i64)> = new_blobs
                 .iter()
-                .map(|(oid, path, cum, cur)| (oid.to_hex().to_string(), path.clone(), *cum, *cur))
+                .map(|(oid, path_id, cum, cur)| (oid.to_hex().to_string(), path_interner.get_str(*path_id), *cum, *cur))
                 .collect();
             let phase_start = Instant::now();
             db.save_blobs(&blobs_for_db, Some(&pb2)).await?;
@@ -275,10 +307,10 @@ impl GitScanner {
                 } else {
                     pb3.set_draw_target(indicatif::ProgressDrawTarget::hidden());
                 }
-                // Convert ObjectId to String for DB storage
+                // Convert ObjectId and path ID to String for DB storage
                 let metadata_for_db: Vec<(String, i64, String, String, i64)> = new_blob_metadata
                     .iter()
-                    .map(|(oid, size, path, author, date)| (oid.to_hex().to_string(), *size, path.clone(), author.clone(), *date))
+                    .map(|(oid, size, path_id, author, date)| (oid.to_hex().to_string(), *size, path_interner.get_str(*path_id), author.clone(), *date))
                     .collect();
                 let phase_start = Instant::now();
                 db.save_blob_metadata(&metadata_for_db, Some(&pb3)).await?;
@@ -318,19 +350,22 @@ impl GitScanner {
 fn scan_tree_recursive_gix<S: Find>(
     odb: &S,
     tree_oid: ObjectId,
-    path: &str,
-    seen_trees: &mut FxHashSet<(ObjectId, String)>,
+    path_buf: &mut Vec<u8>,
+    path_interner: &mut PathInterner,
+    seen_trees: &mut FxHashSet<(ObjectId, u32)>,
     seen_blobs: &mut FxHashSet<ObjectId>,
-    seen_path_blobs: &mut FxHashSet<(String, ObjectId)>,
-    current_path_blobs: &FxHashMap<String, (ObjectId, i64)>,
-    new_blobs: &mut Vec<(ObjectId, String, i64, i64)>,
-    new_blob_metadata: &mut Vec<(ObjectId, i64, String, String, i64)>,
+    seen_path_blobs: &mut FxHashSet<(u32, ObjectId)>,
+    current_path_blobs: &FxHashMap<u32, (ObjectId, i64)>,
+    new_blobs: &mut Vec<(ObjectId, u32, i64, i64)>,
+    new_blob_metadata: &mut Vec<(ObjectId, i64, u32, String, i64)>,
     compressed_sizes: &FxHashMap<ObjectId, u64>,
     git_dir: &Path,
     commit_author: &str,
     commit_date: i64,
 ) {
-    let key = (tree_oid, path.to_string());
+    // Intern the current path for seen_trees key
+    let path_id = path_interner.intern(path_buf);
+    let key = (tree_oid, path_id);
     if !seen_trees.insert(key) {
         return;
     }
@@ -341,20 +376,26 @@ fn scan_tree_recursive_gix<S: Find>(
         Err(_) => return,
     };
 
+    // Remember path length to restore after processing entries
+    let path_len = path_buf.len();
+
     for entry in tree.entries.iter() {
-        let entry_name = entry.filename.to_string();
-        let entry_path = if path.is_empty() {
-            entry_name.clone()
-        } else {
-            format!("{}/{}", path, entry_name)
-        };
+        // Build entry path in the buffer
+        if !path_buf.is_empty() {
+            path_buf.push(b'/');
+        }
+        path_buf.extend_from_slice(entry.filename.as_ref());
 
         let entry_oid = entry.oid.to_owned();
 
         if entry.mode.is_blob() {
-            let path_blob_key = (entry_path.clone(), entry_oid);
+            // Intern the entry path
+            let entry_path_id = path_interner.intern(path_buf);
+            let path_blob_key = (entry_path_id, entry_oid);
 
             if !seen_path_blobs.insert(path_blob_key) {
+                // Restore path buffer and continue
+                path_buf.truncate(path_len);
                 continue;
             }
 
@@ -362,22 +403,23 @@ fn scan_tree_recursive_gix<S: Find>(
             let size = get_compressed_size_by_oid(entry_oid, compressed_sizes, git_dir);
 
             let current_size = current_path_blobs
-                .get(&entry_path)
+                .get(&entry_path_id)
                 .filter(|(head_oid, _)| *head_oid == entry_oid)
                 .map(|(_, s)| *s)
                 .unwrap_or(0);
 
             if is_new_blob {
-                new_blobs.push((entry_oid, entry_path.clone(), size, current_size));
-                new_blob_metadata.push((entry_oid, size, entry_path, commit_author.to_string(), commit_date));
+                new_blobs.push((entry_oid, entry_path_id, size, current_size));
+                new_blob_metadata.push((entry_oid, size, entry_path_id, commit_author.to_string(), commit_date));
             } else if current_size > 0 {
-                new_blobs.push((entry_oid, entry_path, 0, current_size));
+                new_blobs.push((entry_oid, entry_path_id, 0, current_size));
             }
         } else if entry.mode.is_tree() {
             scan_tree_recursive_gix(
                 odb,
                 entry_oid,
-                &entry_path,
+                path_buf,
+                path_interner,
                 seen_trees,
                 seen_blobs,
                 seen_path_blobs,
@@ -390,6 +432,9 @@ fn scan_tree_recursive_gix<S: Find>(
                 commit_date,
             );
         }
+
+        // Restore path buffer for next entry
+        path_buf.truncate(path_len);
     }
 }
 
