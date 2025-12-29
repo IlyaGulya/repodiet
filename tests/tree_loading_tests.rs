@@ -3,8 +3,8 @@
 
 mod common;
 
-use repodiet::repository::Database;
 use repodiet::model::ExtensionStats;
+use repodiet::repository::{BlobRecord, Database};
 use std::collections::HashMap;
 
 /// Helper to create a 20-byte OID from a test identifier
@@ -27,11 +27,11 @@ async fn test_tree_hierarchy_from_db() {
 
     // Save blobs with nested paths
     let blobs = vec![
-        (test_oid(1), "src/main.rs".to_string(), 100i64, 100i64),
-        (test_oid(2), "src/lib.rs".to_string(), 200i64, 200i64),
-        (test_oid(3), "src/utils/helpers.rs".to_string(), 50i64, 50i64),
-        (test_oid(4), "tests/test.rs".to_string(), 75i64, 75i64),
-        (test_oid(5), "README.md".to_string(), 25i64, 25i64),
+        BlobRecord::new(test_oid(1), "src/main.rs", 100, 100),
+        BlobRecord::new(test_oid(2), "src/lib.rs", 200, 200),
+        BlobRecord::new(test_oid(3), "src/utils/helpers.rs", 50, 50),
+        BlobRecord::new(test_oid(4), "tests/test.rs", 75, 75),
+        BlobRecord::new(test_oid(5), "README.md", 25, 25),
     ];
     db.save_blobs(&blobs, None).await.unwrap();
 
@@ -59,9 +59,9 @@ async fn test_size_aggregation_on_load() {
 
     // Save blobs in nested structure
     let blobs = vec![
-        (test_oid(1), "src/a.rs".to_string(), 100i64, 50i64),
-        (test_oid(2), "src/b.rs".to_string(), 200i64, 100i64),
-        (test_oid(3), "src/sub/c.rs".to_string(), 300i64, 150i64),
+        BlobRecord::new(test_oid(1), "src/a.rs", 100, 50),
+        BlobRecord::new(test_oid(2), "src/b.rs", 200, 100),
+        BlobRecord::new(test_oid(3), "src/sub/c.rs", 300, 150),
     ];
     db.save_blobs(&blobs, None).await.unwrap();
 
@@ -88,9 +88,9 @@ async fn test_deleted_files_marked() {
 
     // Save blobs - some with current_size=0 (deleted)
     let blobs = vec![
-        (test_oid(1), "existing.txt".to_string(), 100i64, 100i64),
-        (test_oid(2), "deleted.txt".to_string(), 200i64, 0i64),
-        (test_oid(3), "src/also_deleted.rs".to_string(), 300i64, 0i64),
+        BlobRecord::new(test_oid(1), "existing.txt", 100, 100),
+        BlobRecord::new(test_oid(2), "deleted.txt", 200, 0),
+        BlobRecord::new(test_oid(3), "src/also_deleted.rs", 300, 0),
     ];
     db.save_blobs(&blobs, None).await.unwrap();
 
@@ -118,12 +118,12 @@ async fn test_extension_stats_from_tree() {
 
     // Save blobs with different extensions
     let blobs = vec![
-        (test_oid(1), "src/main.rs".to_string(), 100i64, 100i64),
-        (test_oid(2), "src/lib.rs".to_string(), 200i64, 200i64),
-        (test_oid(3), "assets/logo.png".to_string(), 500i64, 500i64),
-        (test_oid(4), "assets/icon.png".to_string(), 300i64, 300i64),
-        (test_oid(5), "README.md".to_string(), 50i64, 50i64),
-        (test_oid(6), "Makefile".to_string(), 25i64, 25i64), // No extension
+        BlobRecord::new(test_oid(1), "src/main.rs", 100, 100),
+        BlobRecord::new(test_oid(2), "src/lib.rs", 200, 200),
+        BlobRecord::new(test_oid(3), "assets/logo.png", 500, 500),
+        BlobRecord::new(test_oid(4), "assets/icon.png", 300, 300),
+        BlobRecord::new(test_oid(5), "README.md", 50, 50),
+        BlobRecord::new(test_oid(6), "Makefile", 25, 25), // No extension
     ];
     db.save_blobs(&blobs, None).await.unwrap();
 

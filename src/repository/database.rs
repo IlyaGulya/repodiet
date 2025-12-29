@@ -1,11 +1,49 @@
 use anyhow::{Context, Result};
 use indicatif::ProgressBar;
-use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, Pool, Row, Sqlite};
+use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, Pool, Row, Sqlite, Transaction};
+use std::borrow::Cow;
 use std::str::FromStr;
 
 use crate::model::{LargeBlobInfo, TreeNode};
 
 use super::SCHEMA_VERSION;
+
+/// A blob record for database storage (zero-copy friendly)
+#[derive(Debug, Clone)]
+pub struct BlobRecord<'a> {
+    pub oid: [u8; 20],
+    pub path: Cow<'a, str>,
+    pub cumulative_size: i64,
+    pub current_size: i64,
+}
+
+impl<'a> BlobRecord<'a> {
+    pub fn new(oid: [u8; 20], path: impl Into<Cow<'a, str>>, cumulative_size: i64, current_size: i64) -> Self {
+        Self { oid, path: path.into(), cumulative_size, current_size }
+    }
+}
+
+/// Blob metadata record for database storage (zero-copy friendly)
+#[derive(Debug, Clone)]
+pub struct BlobMetaRecord<'a> {
+    pub oid: [u8; 20],
+    pub size: i64,
+    pub path: Cow<'a, str>,
+    pub author: Cow<'a, str>,
+    pub timestamp: i64,
+}
+
+impl<'a> BlobMetaRecord<'a> {
+    pub fn new(
+        oid: [u8; 20],
+        size: i64,
+        path: impl Into<Cow<'a, str>>,
+        author: impl Into<Cow<'a, str>>,
+        timestamp: i64,
+    ) -> Self {
+        Self { oid, size, path: path.into(), author: author.into(), timestamp }
+    }
+}
 
 /// Database abstraction for SQLite operations
 pub struct Database {
@@ -209,12 +247,105 @@ impl Database {
     }
 
     /// Save batch of new blobs using multi-row INSERT for speed
-    /// OIDs are raw 20-byte SHA-1 hashes (stored as BLOB)
-    pub async fn save_blobs(&self, blobs: &[([u8; 20], String, i64, i64)], progress: Option<&ProgressBar>) -> Result<()> {
-        const BATCH_SIZE: usize = 5000;
+    #[allow(dead_code)]
+    pub async fn save_blobs(&self, blobs: &[BlobRecord<'_>], progress: Option<&ProgressBar>) -> Result<()> {
+        self.save_blobs_with_callback(blobs, |n| {
+            if let Some(pb) = progress {
+                pb.inc(n as u64);
+            }
+        }).await
+    }
 
-        // Use a single transaction for all batches
+    /// Save blob metadata for large blob detection using multi-row INSERT
+    #[allow(dead_code)]
+    pub async fn save_blob_metadata(&self, metadata: &[BlobMetaRecord<'_>], progress: Option<&ProgressBar>) -> Result<()> {
+        self.save_blob_metadata_with_callback(metadata, |n| {
+            if let Some(pb) = progress {
+                pb.inc(n as u64);
+            }
+        }).await
+    }
+
+    /// Save batch of new blobs with a callback for progress
+    pub async fn save_blobs_with_callback<F>(
+        &self,
+        blobs: &[BlobRecord<'_>],
+        mut on_progress: F,
+    ) -> Result<()>
+    where
+        F: FnMut(usize),
+    {
         let mut tx = self.pool.begin().await?;
+        self.save_blobs_in_tx(&mut tx, blobs, &mut on_progress)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Save blob metadata with a callback for progress
+    pub async fn save_blob_metadata_with_callback<F>(
+        &self,
+        metadata: &[BlobMetaRecord<'_>],
+        mut on_progress: F,
+    ) -> Result<()>
+    where
+        F: FnMut(usize),
+    {
+        let mut tx = self.pool.begin().await?;
+        self.save_blob_metadata_in_tx(&mut tx, metadata, &mut on_progress)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Mark commits as scanned using multi-row INSERT
+    /// OIDs are raw 20-byte SHA-1 hashes (stored as BLOB)
+    pub async fn mark_commits_scanned(&self, oids: &[[u8; 20]]) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.mark_commits_scanned_in_tx(&mut tx, oids).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Apply blobs + metadata + scanned commits in ONE transaction.
+    pub async fn apply_scan_with_callback<F1, F2>(
+        &self,
+        blobs: &[BlobRecord<'_>],
+        metadata: &[BlobMetaRecord<'_>],
+        scanned_commits: &[[u8; 20]],
+        mut on_blobs_progress: F1,
+        mut on_meta_progress: F2,
+    ) -> Result<()>
+    where
+        F1: FnMut(usize),
+        F2: FnMut(usize),
+    {
+        let mut tx = self.pool.begin().await?;
+
+        // Persist rows
+        self.save_blobs_in_tx(&mut tx, blobs, &mut on_blobs_progress)
+            .await?;
+        self.save_blob_metadata_in_tx(&mut tx, metadata, &mut on_meta_progress)
+            .await?;
+
+        // Advance state
+        self.mark_commits_scanned_in_tx(&mut tx, scanned_commits)
+            .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn save_blobs_in_tx<F>(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        blobs: &[BlobRecord<'_>],
+        on_progress: &mut F,
+    ) -> Result<()>
+    where
+        F: FnMut(usize),
+    {
+        const BATCH_SIZE: usize = 5000;
 
         for chunk in blobs.chunks(BATCH_SIZE) {
             // Multi-row INSERT for seen_blobs
@@ -225,51 +356,50 @@ impl Database {
                     placeholders.join(", ")
                 );
                 let mut query = sqlx::query(&sql);
-                for (oid, _, _, _) in chunk {
-                    query = query.bind(oid.as_slice());
+                for record in chunk {
+                    query = query.bind(record.oid.as_slice());
                 }
-                query.execute(&mut *tx).await?;
+                query.execute(&mut **tx).await?;
             }
 
-            // paths table needs individual upserts due to complex ON CONFLICT logic
-            for (_, path, cumulative, current) in chunk {
+            // paths table needs individual upserts
+            for record in chunk {
                 sqlx::query(
                     "INSERT INTO paths (path, cumulative_size, current_size, blob_count) VALUES (?, ?, ?, 1)
                      ON CONFLICT(path) DO UPDATE SET
                         cumulative_size = cumulative_size + excluded.cumulative_size,
                         current_size = current_size + excluded.current_size,
-                        blob_count = blob_count + 1"
+                        blob_count = blob_count + 1",
                 )
-                .bind(path)
-                .bind(cumulative)
-                .bind(current)
-                .execute(&mut *tx)
+                .bind(record.path.as_ref())
+                .bind(record.cumulative_size)
+                .bind(record.current_size)
+                .execute(&mut **tx)
                 .await?;
             }
 
-            if let Some(pb) = progress {
-                pb.inc(chunk.len() as u64);
-            }
+            on_progress(chunk.len());
         }
 
-        tx.commit().await?;
         Ok(())
     }
 
-    /// Save blob metadata for large blob detection using multi-row INSERT
-    /// OIDs are raw 20-byte SHA-1 hashes (stored as BLOB)
-    pub async fn save_blob_metadata(&self, metadata: &[([u8; 20], i64, String, String, i64)], progress: Option<&ProgressBar>) -> Result<()> {
+    async fn save_blob_metadata_in_tx<F>(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        metadata: &[BlobMetaRecord<'_>],
+        on_progress: &mut F,
+    ) -> Result<()>
+    where
+        F: FnMut(usize),
+    {
         const BATCH_SIZE: usize = 5000;
-
-        // Use a single transaction for all batches
-        let mut tx = self.pool.begin().await?;
 
         for chunk in metadata.chunks(BATCH_SIZE) {
             if chunk.is_empty() {
                 continue;
             }
 
-            // Build multi-row INSERT: VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?), ...
             let placeholders: Vec<&str> = vec!["(?, ?, ?, ?, ?)"; chunk.len()];
             let sql = format!(
                 "INSERT OR IGNORE INTO blobs (oid, size, path, first_author, first_date) VALUES {}",
@@ -277,29 +407,30 @@ impl Database {
             );
 
             let mut query = sqlx::query(&sql);
-            for (oid, size, path, author, date) in chunk {
-                query = query.bind(oid.as_slice()).bind(size).bind(path).bind(author).bind(date);
+            for record in chunk {
+                query = query
+                    .bind(record.oid.as_slice())
+                    .bind(record.size)
+                    .bind(record.path.as_ref())
+                    .bind(record.author.as_ref())
+                    .bind(record.timestamp);
             }
-            query.execute(&mut *tx).await?;
+            query.execute(&mut **tx).await?;
 
-            if let Some(pb) = progress {
-                pb.inc(chunk.len() as u64);
-            }
+            on_progress(chunk.len());
         }
 
-        tx.commit().await?;
         Ok(())
     }
 
-    /// Mark commits as scanned using multi-row INSERT
-    /// OIDs are raw 20-byte SHA-1 hashes (stored as BLOB)
-    pub async fn mark_commits_scanned(&self, oids: &[[u8; 20]]) -> Result<()> {
+    async fn mark_commits_scanned_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        commits: &[[u8; 20]],
+    ) -> Result<()> {
         const BATCH_SIZE: usize = 5000;
 
-        // Use a single transaction for all batches
-        let mut tx = self.pool.begin().await?;
-
-        for chunk in oids.chunks(BATCH_SIZE) {
+        for chunk in commits.chunks(BATCH_SIZE) {
             if chunk.is_empty() {
                 continue;
             }
@@ -314,10 +445,9 @@ impl Database {
             for oid in chunk {
                 query = query.bind(oid.as_slice());
             }
-            query.execute(&mut *tx).await?;
+            query.execute(&mut **tx).await?;
         }
 
-        tx.commit().await?;
         Ok(())
     }
 }

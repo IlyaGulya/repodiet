@@ -3,7 +3,7 @@
 
 mod common;
 
-use repodiet::repository::{Database, SCHEMA_VERSION};
+use repodiet::repository::{BlobMetaRecord, BlobRecord, Database, SCHEMA_VERSION};
 
 /// Helper to create a 20-byte OID from a test identifier
 fn test_oid(id: u8) -> [u8; 20] {
@@ -69,11 +69,11 @@ async fn test_metadata_roundtrip() {
 async fn test_save_and_load_tree() {
     let db = setup_db().await;
 
-    // Save some blobs (oid, path, cumulative_size, current_size)
+    // Save some blobs
     let blobs = vec![
-        (test_oid(1), "src/main.rs".to_string(), 1000i64, 500i64),
-        (test_oid(2), "src/lib.rs".to_string(), 800i64, 400i64),
-        (test_oid(3), "README.md".to_string(), 200i64, 200i64),
+        BlobRecord::new(test_oid(1), "src/main.rs", 1000, 500),
+        BlobRecord::new(test_oid(2), "src/lib.rs", 800, 400),
+        BlobRecord::new(test_oid(3), "README.md", 200, 200),
     ];
     db.save_blobs(&blobs, None).await.unwrap();
 
@@ -101,13 +101,13 @@ async fn test_blob_conflict_handling() {
 
     // Save first blob for a path
     let blobs1 = vec![
-        (test_oid(1), "src/file.rs".to_string(), 100i64, 50i64),
+        BlobRecord::new(test_oid(1), "src/file.rs", 100, 50),
     ];
     db.save_blobs(&blobs1, None).await.unwrap();
 
     // Save another blob for the same path (simulating new version)
     let blobs2 = vec![
-        (test_oid(2), "src/file.rs".to_string(), 150i64, 75i64),
+        BlobRecord::new(test_oid(2), "src/file.rs", 150, 75),
     ];
     db.save_blobs(&blobs2, None).await.unwrap();
 
@@ -130,10 +130,10 @@ async fn test_top_blobs_sorted() {
 
     // Save blob metadata with different sizes
     let metadata = vec![
-        (test_oid(1), 100i64, "small.txt".to_string(), "author".to_string(), 1000i64),
-        (test_oid(2), 500i64, "medium.txt".to_string(), "author".to_string(), 1001i64),
-        (test_oid(3), 1000i64, "large.txt".to_string(), "author".to_string(), 1002i64),
-        (test_oid(4), 250i64, "small2.txt".to_string(), "author".to_string(), 1003i64),
+        BlobMetaRecord::new(test_oid(1), 100, "small.txt", "author", 1000),
+        BlobMetaRecord::new(test_oid(2), 500, "medium.txt", "author", 1001),
+        BlobMetaRecord::new(test_oid(3), 1000, "large.txt", "author", 1002),
+        BlobMetaRecord::new(test_oid(4), 250, "small2.txt", "author", 1003),
     ];
     db.save_blob_metadata(&metadata, None).await.unwrap();
 
@@ -160,8 +160,8 @@ async fn test_seen_blobs_tracking() {
 
     // Save blobs - they should be marked as seen
     let blobs = vec![
-        (test_oid(1), "file1.txt".to_string(), 100i64, 100i64),
-        (test_oid(2), "file2.txt".to_string(), 200i64, 200i64),
+        BlobRecord::new(test_oid(1), "file1.txt", 100, 100),
+        BlobRecord::new(test_oid(2), "file2.txt", 200, 200),
     ];
     db.save_blobs(&blobs, None).await.unwrap();
 
@@ -173,7 +173,7 @@ async fn test_seen_blobs_tracking() {
 
     // Save same oid again - should not duplicate
     let blobs2 = vec![
-        (test_oid(1), "file1.txt".to_string(), 50i64, 50i64),
+        BlobRecord::new(test_oid(1), "file1.txt", 50, 50),
     ];
     db.save_blobs(&blobs2, None).await.unwrap();
 
