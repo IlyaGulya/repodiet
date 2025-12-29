@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use indicatif::ProgressBar;
-use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, Pool, Row, Sqlite, Transaction};
+use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, Pool, QueryBuilder, Row, Sqlite, Transaction};
 use std::borrow::Cow;
 use std::str::FromStr;
 
@@ -348,18 +348,15 @@ impl Database {
         const BATCH_SIZE: usize = 5000;
 
         for chunk in blobs.chunks(BATCH_SIZE) {
-            // Multi-row INSERT for seen_blobs
+            // Multi-row INSERT for seen_blobs using QueryBuilder
             if !chunk.is_empty() {
-                let placeholders: Vec<&str> = vec!["(?)"; chunk.len()];
-                let sql = format!(
-                    "INSERT OR IGNORE INTO seen_blobs (oid) VALUES {}",
-                    placeholders.join(", ")
+                let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
+                    "INSERT OR IGNORE INTO seen_blobs (oid) "
                 );
-                let mut query = sqlx::query(&sql);
-                for record in chunk {
-                    query = query.bind(record.oid.as_slice());
-                }
-                query.execute(&mut **tx).await?;
+                qb.push_values(chunk, |mut row, record| {
+                    row.push_bind(record.oid.as_slice());
+                });
+                qb.build().execute(&mut **tx).await?;
             }
 
             // paths table needs individual upserts
@@ -400,22 +397,17 @@ impl Database {
                 continue;
             }
 
-            let placeholders: Vec<&str> = vec!["(?, ?, ?, ?, ?)"; chunk.len()];
-            let sql = format!(
-                "INSERT OR IGNORE INTO blobs (oid, size, path, first_author, first_date) VALUES {}",
-                placeholders.join(", ")
+            let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
+                "INSERT OR IGNORE INTO blobs (oid, size, path, first_author, first_date) "
             );
-
-            let mut query = sqlx::query(&sql);
-            for record in chunk {
-                query = query
-                    .bind(record.oid.as_slice())
-                    .bind(record.size)
-                    .bind(record.path.as_ref())
-                    .bind(record.author.as_ref())
-                    .bind(record.timestamp);
-            }
-            query.execute(&mut **tx).await?;
+            qb.push_values(chunk, |mut row, record| {
+                row.push_bind(record.oid.as_slice())
+                    .push_bind(record.size)
+                    .push_bind(record.path.as_ref())
+                    .push_bind(record.author.as_ref())
+                    .push_bind(record.timestamp);
+            });
+            qb.build().execute(&mut **tx).await?;
 
             on_progress(chunk.len());
         }
@@ -435,17 +427,13 @@ impl Database {
                 continue;
             }
 
-            let placeholders: Vec<&str> = vec!["(?)"; chunk.len()];
-            let sql = format!(
-                "INSERT OR IGNORE INTO scanned_commits (oid) VALUES {}",
-                placeholders.join(", ")
+            let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
+                "INSERT OR IGNORE INTO scanned_commits (oid) "
             );
-
-            let mut query = sqlx::query(&sql);
-            for oid in chunk {
-                query = query.bind(oid.as_slice());
-            }
-            query.execute(&mut **tx).await?;
+            qb.push_values(chunk, |mut row, oid| {
+                row.push_bind(oid.as_slice());
+            });
+            qb.build().execute(&mut **tx).await?;
         }
 
         Ok(())
