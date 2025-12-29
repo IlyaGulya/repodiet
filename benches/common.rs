@@ -2,80 +2,105 @@
 // Functions here are used across different benchmark files
 #![allow(dead_code)]
 
+use criterion::async_executor::AsyncExecutor;
 use repodiet::model::TreeNode;
-use repodiet::repository::Database;
+use repodiet::repository::{BlobMetaRecord, BlobRecord, Database};
 use git2::{Repository, Signature};
+use std::borrow::Cow;
 use std::path::PathBuf;
 use tempfile::TempDir;
+use tokio::runtime::Runtime;
 
-/// Generate a tree with N paths for benchmarking
-pub fn generate_tree(num_paths: usize) -> TreeNode {
+/// Async executor for Criterion benchmarks
+pub struct TokioExecutor(pub Runtime);
+
+impl AsyncExecutor for TokioExecutor {
+    fn block_on<T>(&self, future: impl std::future::Future<Output = T>) -> T {
+        self.0.block_on(future)
+    }
+}
+
+/// Create a new TokioExecutor
+pub fn tokio_executor() -> TokioExecutor {
+    TokioExecutor(Runtime::new().unwrap())
+}
+
+/// Generate path parts for a given index
+fn path_parts(i: usize) -> Vec<String> {
+    const DIRS: [&str; 5] = ["src", "lib", "test", "pkg", "mod"];
+    let depth = (i % 5) + 1;
+
+    let mut parts: Vec<String> = (0..depth)
+        .map(|d| format!("{}_{}", DIRS[d], i / 1000))
+        .collect();
+
+    parts.push(format!("file_{}.rs", i));
+    parts
+}
+
+/// Generate a tree with configurable current_size calculation
+fn generate_tree_generic(num_paths: usize, current_size: impl Fn(usize) -> u64) -> TreeNode {
     let mut root = TreeNode::new("(root)");
-    let dirs = ["src", "lib", "test", "pkg", "mod"];
-
     for i in 0..num_paths {
-        let depth = (i % 5) + 1;
-        let mut path_parts: Vec<String> = (0..depth)
-            .map(|d| format!("{}_{}", dirs[d], i / 1000))
-            .collect();
-        path_parts.push(format!("file_{}.rs", i));
-
-        let path_refs: Vec<&str> = path_parts.iter().map(|s| s.as_str()).collect();
-        root.add_path_with_sizes(&path_refs, (i * 100) as u64, (i * 50) as u64, 1);
+        let parts = path_parts(i);
+        let refs: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
+        root.add_path_with_sizes(&refs, (i * 100) as u64, current_size(i), 1);
     }
     root.compute_totals();
     root
+}
+
+/// Generate a tree with N paths for benchmarking
+pub fn generate_tree(num_paths: usize) -> TreeNode {
+    generate_tree_generic(num_paths, |i| (i * 50) as u64)
 }
 
 /// Generate a tree with some deleted files for benchmarking deletion detection
 pub fn generate_tree_with_deletions(num_paths: usize, deletion_ratio: f64) -> TreeNode {
-    let mut root = TreeNode::new("(root)");
-    let dirs = ["src", "lib", "test", "pkg", "mod"];
-
-    for i in 0..num_paths {
-        let depth = (i % 5) + 1;
-        let mut path_parts: Vec<String> = (0..depth)
-            .map(|d| format!("{}_{}", dirs[d], i / 1000))
-            .collect();
-        path_parts.push(format!("file_{}.rs", i));
-
-        let path_refs: Vec<&str> = path_parts.iter().map(|s| s.as_str()).collect();
-
-        // Mark some files as deleted (current_size = 0)
-        let current_size = if (i as f64 / num_paths as f64) < deletion_ratio {
+    generate_tree_generic(num_paths, |i| {
+        if (i as f64 / num_paths as f64) < deletion_ratio {
             0
         } else {
             (i * 50) as u64
-        };
+        }
+    })
+}
 
-        root.add_path_with_sizes(&path_refs, (i * 100) as u64, current_size, 1);
-    }
-    root.compute_totals();
-    root
+/// Generate a deterministic 20-byte OID from an index
+pub fn make_oid(i: usize) -> [u8; 20] {
+    let mut oid = [0u8; 20];
+    let bytes = i.to_le_bytes();
+    oid[..bytes.len()].copy_from_slice(&bytes);
+    oid
+}
+
+/// Generate commit OIDs for database benchmarks
+pub fn generate_commit_oids(num_commits: usize) -> Vec<[u8; 20]> {
+    (0..num_commits).map(make_oid).collect()
 }
 
 /// Generate blob data for database benchmarks
-pub fn generate_blobs(num_blobs: usize) -> Vec<(String, String, i64, i64)> {
+pub fn generate_blobs(num_blobs: usize) -> Vec<BlobRecord<'static>> {
     (0..num_blobs)
-        .map(|i| (
-            format!("oid_{:08x}", i),
-            format!("src/dir_{}/file_{}.rs", i % 100, i),
-            (i * 100) as i64,
-            (i * 50) as i64,
-        ))
+        .map(|i| BlobRecord {
+            oid: make_oid(i),
+            path: Cow::Owned(format!("src/dir_{}/file_{}.rs", i % 100, i)),
+            cumulative_size: (i * 100) as i64,
+            current_size: (i * 50) as i64,
+        })
         .collect()
 }
 
 /// Generate blob metadata for database benchmarks
-pub fn generate_blob_metadata(num_blobs: usize) -> Vec<(String, i64, String, String, i64)> {
+pub fn generate_blob_metadata(num_blobs: usize) -> Vec<BlobMetaRecord<'static>> {
     (0..num_blobs)
-        .map(|i| (
-            format!("oid_{:08x}", i),
-            (i * 1000) as i64, // size
-            format!("src/dir_{}/file_{}.rs", i % 100, i),
-            format!("author_{}", i % 10),
-            1700000000 + (i as i64), // timestamp
-        ))
+        .map(|i| BlobMetaRecord {
+            oid: make_oid(i),
+            size: (i * 1000) as i64,
+            path: Cow::Owned(format!("src/dir_{}/file_{}.rs", i % 100, i)),
+            author: Cow::Owned(format!("author_{}", i % 10)),
+            timestamp: 1700000000 + (i as i64),
+        })
         .collect()
 }
 

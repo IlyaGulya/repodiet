@@ -2,20 +2,11 @@
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use std::hint::black_box;
-use criterion::async_executor::AsyncExecutor;
 use repodiet::repository::{Database, GitScanner};
 use tokio::runtime::Runtime;
 use tempfile::TempDir;
 
 mod common;
-
-struct TokioExecutor(Runtime);
-
-impl AsyncExecutor for TokioExecutor {
-    fn block_on<T>(&self, future: impl std::future::Future<Output = T>) -> T {
-        self.0.block_on(future)
-    }
-}
 
 /// Create a database in a temp directory
 async fn create_db_in_dir(dir: &TempDir) -> Database {
@@ -68,7 +59,7 @@ fn bench_scan_small_repo(c: &mut Criterion) {
     }
 
     group.bench_function("50_commits_200_files", |b| {
-        b.to_async(TokioExecutor(Runtime::new().unwrap())).iter(|| async {
+        b.to_async(common::tokio_executor()).iter(|| async {
             // Create fresh database for each iteration
             let db = create_db_in_dir(&dir).await;
             let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
@@ -122,7 +113,7 @@ fn bench_scan_medium_repo(c: &mut Criterion) {
     }
 
     group.bench_function("200_commits_500_files", |b| {
-        b.to_async(TokioExecutor(Runtime::new().unwrap())).iter(|| async {
+        b.to_async(common::tokio_executor()).iter(|| async {
             // Create fresh database for each iteration
             let db = create_db_in_dir(&dir).await;
             let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
@@ -192,7 +183,7 @@ fn bench_incremental_scan(c: &mut Criterion) {
 
     // Benchmark incremental scan (should be much faster than full scan)
     group.bench_function("10_new_commits_after_100", |b| {
-        b.to_async(TokioExecutor(Runtime::new().unwrap())).iter(|| async {
+        b.to_async(common::tokio_executor()).iter(|| async {
             let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
             black_box(scanner.scan(&db).await.unwrap())
         });

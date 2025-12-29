@@ -2,18 +2,8 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::hint::black_box;
-use criterion::async_executor::AsyncExecutor;
-use tokio::runtime::Runtime;
 
 mod common;
-
-struct TokioExecutor(Runtime);
-
-impl AsyncExecutor for TokioExecutor {
-    fn block_on<T>(&self, future: impl std::future::Future<Output = T>) -> T {
-        self.0.block_on(future)
-    }
-}
 
 fn bench_save_blobs(c: &mut Criterion) {
     let mut group = c.benchmark_group("db_save_blobs");
@@ -24,7 +14,7 @@ fn bench_save_blobs(c: &mut Criterion) {
             BenchmarkId::new("blobs", size),
             &blobs,
             |b, blobs| {
-                b.to_async(TokioExecutor(Runtime::new().unwrap())).iter(|| async {
+                b.to_async(common::tokio_executor()).iter(|| async {
                     let db = common::setup_bench_db().await;
                     db.save_blobs(blobs, None).await.unwrap();
                     black_box(db)
@@ -44,7 +34,7 @@ fn bench_load_tree(c: &mut Criterion) {
             BenchmarkId::new("paths", size),
             &blobs,
             |b, blobs| {
-                b.to_async(TokioExecutor(Runtime::new().unwrap())).iter(|| {
+                b.to_async(common::tokio_executor()).iter(|| {
                     let blobs = blobs.clone();
                     async move {
                         let db = common::setup_bench_db().await;
@@ -68,7 +58,7 @@ fn bench_get_top_blobs(c: &mut Criterion) {
             BenchmarkId::new("limit", limit),
             &limit,
             |b, &limit| {
-                b.to_async(TokioExecutor(Runtime::new().unwrap())).iter(|| {
+                b.to_async(common::tokio_executor()).iter(|| {
                     let metadata = metadata.clone();
                     async move {
                         let db = common::setup_bench_db().await;
@@ -84,17 +74,19 @@ fn bench_get_top_blobs(c: &mut Criterion) {
 
 fn bench_is_commit_scanned(c: &mut Criterion) {
     let mut group = c.benchmark_group("db_is_commit_scanned");
-    let commits: Vec<String> = (0..1000).map(|i| format!("commit_{:08x}", i)).collect();
+    let commits = common::generate_commit_oids(1000);
+    let existing_oid = common::make_oid(100);
+    let missing_oid = common::make_oid(9999); // Not in the 0..1000 range
 
     // Benchmark lookup of existing commit
     group.bench_function("lookup_existing", |b| {
         let commits = commits.clone();
-        b.to_async(TokioExecutor(Runtime::new().unwrap())).iter(|| {
+        b.to_async(common::tokio_executor()).iter(|| {
             let commits = commits.clone();
             async move {
                 let db = common::setup_bench_db().await;
                 db.mark_commits_scanned(&commits).await.unwrap();
-                black_box(db.is_commit_scanned("commit_00000100").await)
+                black_box(db.is_commit_scanned(&existing_oid).await)
             }
         });
     });
@@ -102,12 +94,12 @@ fn bench_is_commit_scanned(c: &mut Criterion) {
     // Benchmark lookup of non-existing commit
     group.bench_function("lookup_missing", |b| {
         let commits = commits.clone();
-        b.to_async(TokioExecutor(Runtime::new().unwrap())).iter(|| {
+        b.to_async(common::tokio_executor()).iter(|| {
             let commits = commits.clone();
             async move {
                 let db = common::setup_bench_db().await;
                 db.mark_commits_scanned(&commits).await.unwrap();
-                black_box(db.is_commit_scanned("nonexistent").await)
+                black_box(db.is_commit_scanned(&missing_oid).await)
             }
         });
     });
@@ -125,7 +117,7 @@ fn bench_save_blob_metadata(c: &mut Criterion) {
             BenchmarkId::new("entries", size),
             &metadata,
             |b, metadata| {
-                b.to_async(TokioExecutor(Runtime::new().unwrap())).iter(|| async {
+                b.to_async(common::tokio_executor()).iter(|| async {
                     let db = common::setup_bench_db().await;
                     db.save_blob_metadata(metadata, None).await.unwrap();
                     black_box(db)
