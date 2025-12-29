@@ -3,6 +3,7 @@ mod extension_viewmodel;
 mod search_viewmodel;
 mod blobs_viewmodel;
 mod app_viewmodel;
+mod selection;
 
 pub use tree_viewmodel::TreeViewModel;
 pub use extension_viewmodel::ExtensionViewModel;

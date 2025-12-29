@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use crate::model::{ExtensionStats, TreeNode};
 
+use super::selection;
+
 /// Computed stats for display
 #[derive(Debug, Clone)]
 pub struct ExtensionStatsView {
@@ -93,25 +95,11 @@ impl ExtensionViewModel {
     }
 
     pub fn move_up(&mut self) {
-        if self.stats.is_empty() {
-            return;
-        }
-        if self.selected_index == 0 {
-            self.selected_index = self.stats.len() - 1;
-        } else {
-            self.selected_index -= 1;
-        }
+        selection::move_up(&mut self.selected_index, self.stats.len());
     }
 
     pub fn move_down(&mut self) {
-        if self.stats.is_empty() {
-            return;
-        }
-        if self.selected_index >= self.stats.len() - 1 {
-            self.selected_index = 0;
-        } else {
-            self.selected_index += 1;
-        }
+        selection::move_down(&mut self.selected_index, self.stats.len());
     }
 }
 

@@ -1,5 +1,7 @@
 use crate::model::LargeBlobInfo;
 
+use super::selection;
+
 /// ViewModel for large blobs view
 pub struct BlobsViewModel {
     blobs: Vec<LargeBlobInfo>,
@@ -33,25 +35,11 @@ impl BlobsViewModel {
     }
 
     pub fn move_up(&mut self) {
-        if self.blobs.is_empty() {
-            return;
-        }
-        if self.selected_index == 0 {
-            self.selected_index = self.blobs.len() - 1;
-        } else {
-            self.selected_index -= 1;
-        }
+        selection::move_up(&mut self.selected_index, self.blobs.len());
     }
 
     pub fn move_down(&mut self) {
-        if self.blobs.is_empty() {
-            return;
-        }
-        if self.selected_index >= self.blobs.len() - 1 {
-            self.selected_index = 0;
-        } else {
-            self.selected_index += 1;
-        }
+        selection::move_down(&mut self.selected_index, self.blobs.len());
     }
 
     /// Get selected blob's path

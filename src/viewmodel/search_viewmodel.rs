@@ -1,5 +1,7 @@
 use crate::model::{SearchResult, TreeNode};
 
+use super::selection;
+
 /// ViewModel for search functionality
 pub struct SearchViewModel {
     query: String,
@@ -101,25 +103,11 @@ impl SearchViewModel {
     }
 
     pub fn move_up(&mut self) {
-        if self.results.is_empty() {
-            return;
-        }
-        if self.selected_index == 0 {
-            self.selected_index = self.results.len() - 1;
-        } else {
-            self.selected_index -= 1;
-        }
+        selection::move_up(&mut self.selected_index, self.results.len());
     }
 
     pub fn move_down(&mut self) {
-        if self.results.is_empty() {
-            return;
-        }
-        if self.selected_index >= self.results.len() - 1 {
-            self.selected_index = 0;
-        } else {
-            self.selected_index += 1;
-        }
+        selection::move_down(&mut self.selected_index, self.results.len());
     }
 
     /// Get selected result's path
