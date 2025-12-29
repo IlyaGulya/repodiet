@@ -9,6 +9,8 @@ use ratatui::{
 use crate::util::format_size;
 use crate::viewmodel::TreeViewModel;
 
+use super::ui_fmt;
+
 pub fn render(frame: &mut Frame, vm: &TreeViewModel, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -73,17 +75,10 @@ fn render_list(frame: &mut Frame, vm: &TreeViewModel, area: Rect) {
             let bloat_str = if show_deleted {
                 "DEL".to_string()
             } else {
-                let bloat = if node.current_size > 0 {
-                    node.display_size as f64 / node.current_size as f64
-                } else {
-                    f64::INFINITY
-                };
-                if bloat.is_infinite() { "DEL".to_string() } else { format!("{:.1}x", bloat) }
+                ui_fmt::bloat_str(node.display_size, node.current_size)
             };
 
-            let bar_width = 20;
-            let filled = ((percent / 100.0) * bar_width as f64) as usize;
-            let bar: String = "█".repeat(filled) + &"░".repeat(bar_width - filled);
+            let bar = ui_fmt::bar(percent, 20);
 
             let prefix = if node.has_children { "▸ " } else { "  " };
             let size_color = if show_deleted { Color::Magenta } else { Color::Cyan };

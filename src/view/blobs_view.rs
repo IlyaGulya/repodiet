@@ -9,6 +9,8 @@ use ratatui::{
 use crate::util::{format_size, format_timestamp};
 use crate::viewmodel::BlobsViewModel;
 
+use super::ui_fmt;
+
 pub fn render(frame: &mut Frame, vm: &BlobsViewModel, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -51,9 +53,7 @@ fn render_list(frame: &mut Frame, vm: &BlobsViewModel, area: Rect) {
                 0.0
             };
 
-            let bar_width = 12;
-            let filled = ((percent / 100.0) * bar_width as f64) as usize;
-            let bar: String = "█".repeat(filled) + &"░".repeat(bar_width - filled);
+            let bar = ui_fmt::bar(percent, 12);
 
             let date_str = format_timestamp(blob.first_date);
 

@@ -9,6 +9,8 @@ use ratatui::{
 use crate::util::format_size;
 use crate::viewmodel::SearchViewModel;
 
+use super::ui_fmt;
+
 pub fn render(frame: &mut Frame, vm: &SearchViewModel, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -56,11 +58,8 @@ fn render_results(frame: &mut Frame, vm: &SearchViewModel, area: Rect) {
                 f64::INFINITY
             };
 
-            let bloat_str = if bloat.is_infinite() { "DEL".to_string() } else { format!("{:.1}x", bloat) };
-
-            let bar_width = 15;
-            let filled = ((percent / 100.0) * bar_width as f64) as usize;
-            let bar: String = "█".repeat(filled) + &"░".repeat(bar_width - filled);
+            let bloat_str = ui_fmt::bloat_str(result.cumulative_size, result.current_size);
+            let bar = ui_fmt::bar(percent, 15);
 
             let bloat_color = if bloat > 50.0 { Color::Red } else if bloat > 20.0 { Color::Yellow } else { Color::Green };
 
