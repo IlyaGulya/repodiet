@@ -359,21 +359,23 @@ impl Database {
                 qb.build().execute(&mut **tx).await?;
             }
 
-            // paths table needs individual upserts
-            for record in chunk {
-                sqlx::query(
-                    "INSERT INTO paths (path, cumulative_size, current_size, blob_count) VALUES (?, ?, ?, 1)
-                     ON CONFLICT(path) DO UPDATE SET
-                        cumulative_size = cumulative_size + excluded.cumulative_size,
-                        current_size = current_size + excluded.current_size,
-                        blob_count = blob_count + 1",
-                )
-                .bind(record.path.as_ref())
-                .bind(record.cumulative_size)
-                .bind(record.current_size)
-                .execute(&mut **tx)
-                .await?;
-            }
+            // Multi-row upsert for paths using QueryBuilder
+            let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
+                "INSERT INTO paths (path, cumulative_size, current_size, blob_count) "
+            );
+            qb.push_values(chunk, |mut row, record| {
+                row.push_bind(record.path.as_ref())
+                    .push_bind(record.cumulative_size)
+                    .push_bind(record.current_size)
+                    .push_bind(1_i64);
+            });
+            qb.push(
+                " ON CONFLICT(path) DO UPDATE SET \
+                    cumulative_size = cumulative_size + excluded.cumulative_size, \
+                    current_size = current_size + excluded.current_size, \
+                    blob_count = blob_count + excluded.blob_count"
+            );
+            qb.build().execute(&mut **tx).await?;
 
             on_progress(chunk.len());
         }
