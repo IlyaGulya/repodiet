@@ -191,8 +191,7 @@ impl GitScanner {
         if self.verbose && !self.profile {
             pb.set_style(
                 ProgressStyle::default_bar()
-                    .template("{spinner:.green} Scanning: [{bar:50.cyan/blue}] {pos}/{len} ({per_sec})")
-                    .unwrap()
+                    .template("{spinner:.green} Scanning: [{bar:50.cyan/blue}] {pos}/{len} ({per_sec})")?
                     .progress_chars("=>-"),
             );
         } else {
@@ -241,7 +240,7 @@ impl GitScanner {
             let commit_date = author_sig.seconds();
 
             path_buf.clear();
-            scan_tree_recursive_gix(
+            scan_tree_recursive(
                 &odb,
                 tree_id,
                 &mut path_buf,
@@ -349,7 +348,7 @@ impl GitScanner {
     }
 }
 
-fn scan_tree_recursive_gix<S: Find>(
+fn scan_tree_recursive<S: Find>(
     odb: &S,
     tree_oid: ObjectId,
     path_buf: &mut Vec<u8>,
@@ -427,7 +426,7 @@ fn scan_tree_recursive_gix<S: Find>(
                 new_blobs.push((entry_oid, entry_path_id, 0, current_size));
             }
         } else if entry.mode.is_tree() {
-            scan_tree_recursive_gix(
+            scan_tree_recursive(
                 odb,
                 entry_oid,
                 path_buf,
