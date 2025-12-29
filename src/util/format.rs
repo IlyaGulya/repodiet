@@ -17,19 +17,20 @@ pub fn format_size(bytes: u64) -> String {
 
 /// Format a Unix timestamp as YYYY-MM-DD string
 pub fn format_timestamp(timestamp: i64) -> String {
+    use time::OffsetDateTime;
+    use time::macros::format_description;
+
     if timestamp == 0 {
         return "unknown".to_string();
     }
-    // Simple date formatting: YYYY-MM-DD
-    let secs_per_day = 86400i64;
-    let days_since_epoch = timestamp / secs_per_day;
-    // Approximate calculation
-    let years = days_since_epoch / 365;
-    let year = 1970 + years;
-    let remaining_days = days_since_epoch % 365;
-    let month = (remaining_days / 30).min(11) + 1;
-    let day = (remaining_days % 30) + 1;
-    format!("{:04}-{:02}-{:02}", year, month, day)
+
+    OffsetDateTime::from_unix_timestamp(timestamp)
+        .ok()
+        .and_then(|dt| {
+            let format = format_description!("[year]-[month]-[day]");
+            dt.format(&format).ok()
+        })
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 #[cfg(test)]
