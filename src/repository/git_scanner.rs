@@ -217,6 +217,7 @@ impl GitScanner {
         let mut new_blob_metadata: Vec<(ObjectId, i64, u32, String, i64)> = Vec::new();
         let mut seen_path_blobs: FxHashSet<(u32, ObjectId)> = FxHashSet::default();
         let mut path_buf: Vec<u8> = Vec::with_capacity(256);
+        let mut buf_pool: Vec<Vec<u8>> = Vec::new();
 
         // Get the object database for direct lookups
         let odb = repo.objects.clone();
@@ -245,6 +246,7 @@ impl GitScanner {
                 tree_id,
                 &mut path_buf,
                 &mut path_interner,
+                &mut buf_pool,
                 &mut seen_trees,
                 &mut seen_blobs,
                 &mut seen_path_blobs,
@@ -352,6 +354,7 @@ fn scan_tree_recursive_gix<S: Find>(
     tree_oid: ObjectId,
     path_buf: &mut Vec<u8>,
     path_interner: &mut PathInterner,
+    buf_pool: &mut Vec<Vec<u8>>,
     seen_trees: &mut FxHashSet<(ObjectId, u32)>,
     seen_blobs: &mut FxHashSet<ObjectId>,
     seen_path_blobs: &mut FxHashSet<(u32, ObjectId)>,
@@ -370,10 +373,19 @@ fn scan_tree_recursive_gix<S: Find>(
         return;
     }
 
-    let mut buf = Vec::new();
+    // Get a buffer from the pool (or allocate if empty)
+    let mut buf =
+        buf_pool.pop()
+            .unwrap_or_else(|| Vec::with_capacity(8 * 1024));
+
+    buf.clear();
+
     let tree = match odb.find_tree(&tree_oid, &mut buf) {
         Ok(t) => t,
-        Err(_) => return,
+        Err(_) => {
+            buf_pool.push(buf);
+            return;
+        }
     };
 
     // Remember path length to restore after processing entries
@@ -420,6 +432,7 @@ fn scan_tree_recursive_gix<S: Find>(
                 entry_oid,
                 path_buf,
                 path_interner,
+                buf_pool,
                 seen_trees,
                 seen_blobs,
                 seen_path_blobs,
@@ -436,6 +449,9 @@ fn scan_tree_recursive_gix<S: Find>(
         // Restore path buffer for next entry
         path_buf.truncate(path_len);
     }
+
+    // Return buffer to pool for reuse
+    buf_pool.push(buf);
 }
 
 /// Load compressed (on-disk) sizes for all objects in a pack file
