@@ -69,40 +69,39 @@ impl Database {
         Ok(Self { pool })
     }
 
-    /// Initialize database schema, returns true if schema was rebuilt
-    pub async fn init_schema(&self) -> Result<bool> {
-        // Create metadata table first (needed to check version)
+    /// Ensure the metadata table exists
+    async fn ensure_metadata_table(&self) -> Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             )"
         ).execute(&self.pool).await?;
+        Ok(())
+    }
 
-        // Check schema version
-        let stored_version: Option<String> = sqlx::query("SELECT value FROM metadata WHERE key = 'schema_version'")
+    /// Read the current schema version from metadata
+    async fn read_schema_version(&self) -> Result<Option<String>> {
+        Ok(sqlx::query("SELECT value FROM metadata WHERE key = 'schema_version'")
             .fetch_optional(&self.pool)
             .await?
-            .map(|row| row.get("value"));
+            .map(|row| row.get("value")))
+    }
 
-        let needs_rebuild = stored_version.as_deref() != Some(SCHEMA_VERSION);
+    /// Drop all data tables for schema rebuild
+    async fn drop_old_tables(&self) -> Result<()> {
+        sqlx::query("DROP TABLE IF EXISTS path_stats").execute(&self.pool).await?;
+        sqlx::query("DROP TABLE IF EXISTS path_lookup").execute(&self.pool).await?;
+        sqlx::query("DROP TABLE IF EXISTS paths").execute(&self.pool).await?;
+        sqlx::query("DROP TABLE IF EXISTS seen_blobs").execute(&self.pool).await?;
+        sqlx::query("DROP TABLE IF EXISTS scanned_commits").execute(&self.pool).await?;
+        sqlx::query("DROP TABLE IF EXISTS blobs").execute(&self.pool).await?;
+        sqlx::query("DELETE FROM metadata").execute(&self.pool).await?;
+        Ok(())
+    }
 
-        if needs_rebuild {
-            if stored_version.is_some() {
-                eprintln!("Schema version changed ({} -> {}), rebuilding index...",
-                    stored_version.unwrap_or_default(), SCHEMA_VERSION);
-            }
-            // Drop and recreate all tables (including old normalized tables if they exist)
-            sqlx::query("DROP TABLE IF EXISTS path_stats").execute(&self.pool).await?;
-            sqlx::query("DROP TABLE IF EXISTS path_lookup").execute(&self.pool).await?;
-            sqlx::query("DROP TABLE IF EXISTS paths").execute(&self.pool).await?;
-            sqlx::query("DROP TABLE IF EXISTS seen_blobs").execute(&self.pool).await?;
-            sqlx::query("DROP TABLE IF EXISTS scanned_commits").execute(&self.pool).await?;
-            sqlx::query("DROP TABLE IF EXISTS blobs").execute(&self.pool).await?;
-            sqlx::query("DELETE FROM metadata").execute(&self.pool).await?;
-        }
-
-        // Create tables - simple schema without normalization for performance
+    /// Create all data tables
+    async fn create_tables(&self) -> Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS paths (
                 path TEXT PRIMARY KEY,
@@ -134,12 +133,37 @@ impl Database {
             )"
         ).execute(&self.pool).await?;
 
-        // Store current schema version
+        Ok(())
+    }
+
+    /// Write the current schema version to metadata
+    async fn write_schema_version(&self) -> Result<()> {
+        sqlx::query("INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?)")
+            .bind(SCHEMA_VERSION)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Initialize database schema, returns true if schema was rebuilt
+    pub async fn init_schema(&self) -> Result<bool> {
+        self.ensure_metadata_table().await?;
+
+        let stored_version = self.read_schema_version().await?;
+        let needs_rebuild = stored_version.as_deref() != Some(SCHEMA_VERSION);
+
         if needs_rebuild {
-            sqlx::query("INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?)")
-                .bind(SCHEMA_VERSION)
-                .execute(&self.pool)
-                .await?;
+            if stored_version.is_some() {
+                eprintln!("Schema version changed ({} -> {}), rebuilding index...",
+                    stored_version.unwrap_or_default(), SCHEMA_VERSION);
+            }
+            self.drop_old_tables().await?;
+        }
+
+        self.create_tables().await?;
+
+        if needs_rebuild {
+            self.write_schema_version().await?;
         }
 
         Ok(needs_rebuild)
