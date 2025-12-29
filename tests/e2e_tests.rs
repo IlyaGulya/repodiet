@@ -28,7 +28,7 @@ async fn test_full_scan_to_viewmodel() {
 
     // Scan
     let db = create_db_in_dir(&dir).await;
-    let scanner = GitScanner::new(repo_path.to_str().unwrap());
+    let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
     let tree = scanner.scan(&db).await.unwrap();
 
     // Create TreeViewModel
@@ -63,7 +63,7 @@ async fn test_search_across_scanned_data() {
 
     // Scan
     let db = create_db_in_dir(&dir).await;
-    let scanner = GitScanner::new(repo_path.to_str().unwrap());
+    let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
     let tree = scanner.scan(&db).await.unwrap();
 
     // Create SearchViewModel
@@ -109,7 +109,7 @@ async fn test_large_blobs_from_scan() {
 
     // Scan
     let db = create_db_in_dir(&dir).await;
-    let scanner = GitScanner::new(repo_path.to_str().unwrap());
+    let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
     let tree = scanner.scan(&db).await.unwrap();
     let total_cumulative = tree.cumulative_size;
 

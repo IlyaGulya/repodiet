@@ -26,7 +26,7 @@ async fn test_scan_empty_repo() {
     repo.commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[]).unwrap();
 
     let db = create_db_in_dir(&dir).await;
-    let scanner = GitScanner::new(repo_path.to_str().unwrap());
+    let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
 
     let tree = scanner.scan(&db).await.unwrap();
 
@@ -47,7 +47,7 @@ async fn test_scan_single_commit() {
     );
 
     let db = create_db_in_dir(&dir).await;
-    let scanner = GitScanner::new(repo_path.to_str().unwrap());
+    let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
 
     let tree = scanner.scan(&db).await.unwrap();
 
@@ -69,7 +69,7 @@ async fn test_scan_multiple_commits() {
     common::add_commit(&repo, &[("file.txt", b"version 2, longer content")], "v2");
 
     let db = create_db_in_dir(&dir).await;
-    let scanner = GitScanner::new(repo_path.to_str().unwrap());
+    let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
 
     let tree = scanner.scan(&db).await.unwrap();
 
@@ -96,7 +96,7 @@ async fn test_deleted_file_detection() {
     common::remove_file_commit(&repo, "to_delete.txt", "Delete file");
 
     let db = create_db_in_dir(&dir).await;
-    let scanner = GitScanner::new(repo_path.to_str().unwrap());
+    let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
 
     let tree = scanner.scan(&db).await.unwrap();
 
@@ -118,7 +118,7 @@ async fn test_incremental_scan() {
     common::add_commit(&repo, &[("file1.txt", b"content1")], "First");
 
     let db = create_db_in_dir(&dir).await;
-    let scanner = GitScanner::new(repo_path.to_str().unwrap());
+    let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
 
     // First scan
     let tree1 = scanner.scan(&db).await.unwrap();
@@ -140,7 +140,7 @@ async fn test_head_caching() {
     common::add_commit(&repo, &[("file.txt", b"content")], "Initial");
 
     let db = create_db_in_dir(&dir).await;
-    let scanner = GitScanner::new(repo_path.to_str().unwrap());
+    let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
 
     // First scan
     scanner.scan(&db).await.unwrap();
@@ -164,7 +164,7 @@ async fn test_large_blob_metadata() {
     common::add_commit(&repo, &[("large.bin", &[0u8; 1000])], "Add large file");
 
     let db = create_db_in_dir(&dir).await;
-    let scanner = GitScanner::new(repo_path.to_str().unwrap());
+    let scanner = GitScanner::quiet(repo_path.to_str().unwrap());
 
     scanner.scan(&db).await.unwrap();
 
