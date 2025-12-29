@@ -2641,6 +2641,7 @@ dependencies = [
  "gix",
  "gix-hash",
  "gix-pack",
+ "hex",
  "indicatif",
  "ratatui",
  "rustc-hash",

@@ -1,7 +1,7 @@
 /// Large blob information for display in the large blob detective view
 #[derive(Debug, Clone)]
 pub struct LargeBlobInfo {
-    pub oid: String,
+    pub oid: Vec<u8>,
     pub size: u64,
     pub path: String,
     pub first_author: String,

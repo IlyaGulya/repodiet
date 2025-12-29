@@ -18,6 +18,7 @@ gix = { version = "0.76.0", default-features = false, features = ["max-performan
 gix-pack = "0.63"
 gix-hash = "0.21"
 rustc-hash = "2"
+hex = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

@@ -170,7 +170,7 @@ impl GitScanner {
         let scanned_commits = db.load_scanned_commit_oids().await;
         let mut commits_to_scan = Vec::new();
         for oid in &all_commits {
-            if !scanned_commits.contains(&oid.to_hex().to_string()) {
+            if !scanned_commits.contains(oid.as_bytes()) {
                 commits_to_scan.push(*oid);
             }
         }
@@ -200,10 +200,10 @@ impl GitScanner {
 
         // Load already-seen blobs into memory for fast lookup
         let phase_start = Instant::now();
-        let seen_blob_strings = db.load_seen_blobs().await?;
-        let mut seen_blobs: FxHashSet<ObjectId> = seen_blob_strings
+        let seen_blob_bytes = db.load_seen_blobs().await?;
+        let mut seen_blobs: FxHashSet<ObjectId> = seen_blob_bytes
             .iter()
-            .filter_map(|s| ObjectId::from_hex(s.as_bytes()).ok())
+            .filter_map(|bytes| ObjectId::try_from(bytes.as_slice()).ok())
             .collect();
         if self.profile {
             eprintln!("[PROFILE] Load seen blobs ({} blobs): {:?}", seen_blobs.len(), phase_start.elapsed());
@@ -276,18 +276,20 @@ impl GitScanner {
             if self.verbose && !self.profile {
                 pb2.set_style(
                     ProgressStyle::default_bar()
-                        .template("{spinner:.green} Indexing: [{bar:50.cyan/blue}] {pos}/{len}")
-                        .unwrap()
+                        .template("{spinner:.green} Indexing: [{bar:50.cyan/blue}] {pos}/{len}")?
                         .progress_chars("=>-"),
                 );
             } else {
                 pb2.set_draw_target(indicatif::ProgressDrawTarget::hidden());
             }
 
-            // Convert ObjectId and path ID to String for DB storage
-            let blobs_for_db: Vec<(String, String, i64, i64)> = new_blobs
+            // Convert ObjectId to raw bytes and path ID to String for DB storage
+            let blobs_for_db: Vec<([u8; 20], String, i64, i64)> = new_blobs
                 .iter()
-                .map(|(oid, path_id, cum, cur)| (oid.to_hex().to_string(), path_interner.get_str(*path_id), *cum, *cur))
+                .map(|(oid, path_id, cum, cur)| {
+                    let bytes: [u8; 20] = oid.as_bytes().try_into().unwrap();
+                    (bytes, path_interner.get_str(*path_id), *cum, *cur)
+                })
                 .collect();
             let phase_start = Instant::now();
             db.save_blobs(&blobs_for_db, Some(&pb2)).await?;
@@ -301,17 +303,19 @@ impl GitScanner {
                 if self.verbose && !self.profile {
                     pb3.set_style(
                         ProgressStyle::default_bar()
-                            .template("{spinner:.green} Indexing metadata: [{bar:50.cyan/blue}] {pos}/{len}")
-                            .unwrap()
+                            .template("{spinner:.green} Indexing metadata: [{bar:50.cyan/blue}] {pos}/{len}")?
                             .progress_chars("=>-"),
                     );
                 } else {
                     pb3.set_draw_target(indicatif::ProgressDrawTarget::hidden());
                 }
-                // Convert ObjectId and path ID to String for DB storage
-                let metadata_for_db: Vec<(String, i64, String, String, i64)> = new_blob_metadata
+                // Convert ObjectId to raw bytes and path ID to String for DB storage
+                let metadata_for_db: Vec<([u8; 20], i64, String, String, i64)> = new_blob_metadata
                     .iter()
-                    .map(|(oid, size, path_id, author, date)| (oid.to_hex().to_string(), *size, path_interner.get_str(*path_id), author.clone(), *date))
+                    .map(|(oid, size, path_id, author, date)| {
+                        let bytes: [u8; 20] = oid.as_bytes().try_into().unwrap();
+                        (bytes, *size, path_interner.get_str(*path_id), author.clone(), *date)
+                    })
                     .collect();
                 let phase_start = Instant::now();
                 db.save_blob_metadata(&metadata_for_db, Some(&pb3)).await?;
@@ -323,7 +327,10 @@ impl GitScanner {
 
             // Mark commits as scanned
             let phase_start = Instant::now();
-            let commit_oids: Vec<String> = commits_to_scan.iter().map(|o| o.to_hex().to_string()).collect();
+            let commit_oids: Vec<[u8; 20]> = commits_to_scan
+                .iter()
+                .map(|o| o.as_bytes().try_into().unwrap())
+                .collect();
             db.mark_commits_scanned(&commit_oids).await?;
             if self.profile {
                 eprintln!("[PROFILE] Mark commits scanned: {:?}", phase_start.elapsed());

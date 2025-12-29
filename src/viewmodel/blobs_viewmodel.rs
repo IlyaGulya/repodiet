@@ -68,14 +68,14 @@ mod tests {
     fn test_navigation() {
         let blobs = vec![
             LargeBlobInfo {
-                oid: "abc".to_string(),
+                oid: "abc".into(),
                 size: 1000,
                 path: "a.png".to_string(),
                 first_author: "alice".to_string(),
                 first_date: 0,
             },
             LargeBlobInfo {
-                oid: "def".to_string(),
+                oid: "def".into(),
                 size: 500,
                 path: "b.png".to_string(),
                 first_author: "bob".to_string(),

@@ -5,4 +5,4 @@ pub use database::Database;
 pub use git_scanner::GitScanner;
 
 // Re-export the schema version for callers who need it
-pub const SCHEMA_VERSION: &str = "7";
+pub const SCHEMA_VERSION: &str = "8";

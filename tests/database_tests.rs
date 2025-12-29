@@ -5,6 +5,13 @@ mod common;
 
 use repodiet::repository::{Database, SCHEMA_VERSION};
 
+/// Helper to create a 20-byte OID from a test identifier
+fn test_oid(id: u8) -> [u8; 20] {
+    let mut oid = [0u8; 20];
+    oid[0] = id;
+    oid
+}
+
 /// Helper to create test database with initialized schema
 async fn setup_db() -> Database {
     let db = common::create_test_db().await;
@@ -64,9 +71,9 @@ async fn test_save_and_load_tree() {
 
     // Save some blobs (oid, path, cumulative_size, current_size)
     let blobs = vec![
-        ("oid1".to_string(), "src/main.rs".to_string(), 1000i64, 500i64),
-        ("oid2".to_string(), "src/lib.rs".to_string(), 800i64, 400i64),
-        ("oid3".to_string(), "README.md".to_string(), 200i64, 200i64),
+        (test_oid(1), "src/main.rs".to_string(), 1000i64, 500i64),
+        (test_oid(2), "src/lib.rs".to_string(), 800i64, 400i64),
+        (test_oid(3), "README.md".to_string(), 200i64, 200i64),
     ];
     db.save_blobs(&blobs, None).await.unwrap();
 
@@ -94,13 +101,13 @@ async fn test_blob_conflict_handling() {
 
     // Save first blob for a path
     let blobs1 = vec![
-        ("oid1".to_string(), "src/file.rs".to_string(), 100i64, 50i64),
+        (test_oid(1), "src/file.rs".to_string(), 100i64, 50i64),
     ];
     db.save_blobs(&blobs1, None).await.unwrap();
 
     // Save another blob for the same path (simulating new version)
     let blobs2 = vec![
-        ("oid2".to_string(), "src/file.rs".to_string(), 150i64, 75i64),
+        (test_oid(2), "src/file.rs".to_string(), 150i64, 75i64),
     ];
     db.save_blobs(&blobs2, None).await.unwrap();
 
@@ -123,10 +130,10 @@ async fn test_top_blobs_sorted() {
 
     // Save blob metadata with different sizes
     let metadata = vec![
-        ("oid1".to_string(), 100i64, "small.txt".to_string(), "author".to_string(), 1000i64),
-        ("oid2".to_string(), 500i64, "medium.txt".to_string(), "author".to_string(), 1001i64),
-        ("oid3".to_string(), 1000i64, "large.txt".to_string(), "author".to_string(), 1002i64),
-        ("oid4".to_string(), 250i64, "small2.txt".to_string(), "author".to_string(), 1003i64),
+        (test_oid(1), 100i64, "small.txt".to_string(), "author".to_string(), 1000i64),
+        (test_oid(2), 500i64, "medium.txt".to_string(), "author".to_string(), 1001i64),
+        (test_oid(3), 1000i64, "large.txt".to_string(), "author".to_string(), 1002i64),
+        (test_oid(4), 250i64, "small2.txt".to_string(), "author".to_string(), 1003i64),
     ];
     db.save_blob_metadata(&metadata, None).await.unwrap();
 
@@ -153,20 +160,20 @@ async fn test_seen_blobs_tracking() {
 
     // Save blobs - they should be marked as seen
     let blobs = vec![
-        ("oid1".to_string(), "file1.txt".to_string(), 100i64, 100i64),
-        ("oid2".to_string(), "file2.txt".to_string(), 200i64, 200i64),
+        (test_oid(1), "file1.txt".to_string(), 100i64, 100i64),
+        (test_oid(2), "file2.txt".to_string(), 200i64, 200i64),
     ];
     db.save_blobs(&blobs, None).await.unwrap();
 
     // Load seen blobs
     let seen = db.load_seen_blobs().await.unwrap();
     assert_eq!(seen.len(), 2);
-    assert!(seen.contains("oid1"));
-    assert!(seen.contains("oid2"));
+    assert!(seen.contains(&test_oid(1)));
+    assert!(seen.contains(&test_oid(2)));
 
     // Save same oid again - should not duplicate
     let blobs2 = vec![
-        ("oid1".to_string(), "file1.txt".to_string(), 50i64, 50i64),
+        (test_oid(1), "file1.txt".to_string(), 50i64, 50i64),
     ];
     db.save_blobs(&blobs2, None).await.unwrap();
 
@@ -178,23 +185,27 @@ async fn test_seen_blobs_tracking() {
 async fn test_commit_scanned_tracking() {
     let db = setup_db().await;
 
+    let commit1 = test_oid(1);
+    let commit2 = test_oid(2);
+    let commit3 = test_oid(3);
+
     // Initially no commits scanned
-    assert!(!db.is_commit_scanned("commit1").await);
-    assert!(!db.is_commit_scanned("commit2").await);
+    assert!(!db.is_commit_scanned(&commit1).await);
+    assert!(!db.is_commit_scanned(&commit2).await);
 
     // Mark commits as scanned
-    db.mark_commits_scanned(&["commit1".to_string(), "commit2".to_string()])
+    db.mark_commits_scanned(&[commit1, commit2])
         .await
         .unwrap();
 
     // Now they should be marked
-    assert!(db.is_commit_scanned("commit1").await);
-    assert!(db.is_commit_scanned("commit2").await);
-    assert!(!db.is_commit_scanned("commit3").await);
+    assert!(db.is_commit_scanned(&commit1).await);
+    assert!(db.is_commit_scanned(&commit2).await);
+    assert!(!db.is_commit_scanned(&commit3).await);
 
     // Mark same commit again - should not error
-    db.mark_commits_scanned(&["commit1".to_string()])
+    db.mark_commits_scanned(&[commit1])
         .await
         .unwrap();
-    assert!(db.is_commit_scanned("commit1").await);
+    assert!(db.is_commit_scanned(&commit1).await);
 }

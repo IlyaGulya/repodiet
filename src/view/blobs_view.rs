@@ -76,7 +76,7 @@ fn render_list(frame: &mut Frame, vm: &BlobsViewModel, area: Rect) {
                 Span::raw(" "),
                 Span::styled(format!("[{}]", bar), Style::default().fg(Color::Blue)),
                 Span::raw(" "),
-                Span::styled(format!("{:>7}", &blob.oid[..7]), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{:>7}", &hex::encode(&blob.oid)[..7]), Style::default().fg(Color::DarkGray)),
                 Span::raw(" "),
                 Span::styled(format!("{:>15}", author_display), Style::default().fg(Color::Yellow)),
                 Span::raw(" "),

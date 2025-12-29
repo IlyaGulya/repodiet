@@ -76,19 +76,19 @@ impl Database {
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS seen_blobs (
-                oid TEXT PRIMARY KEY
+                oid BLOB PRIMARY KEY
             )"
         ).execute(&self.pool).await?;
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS scanned_commits (
-                oid TEXT PRIMARY KEY
+                oid BLOB PRIMARY KEY
             )"
         ).execute(&self.pool).await?;
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS blobs (
-                oid TEXT PRIMARY KEY,
+                oid BLOB PRIMARY KEY,
                 size INTEGER NOT NULL,
                 path TEXT NOT NULL,
                 first_author TEXT NOT NULL,
@@ -172,9 +172,9 @@ impl Database {
 
     /// Check if a commit has been scanned (used by tests)
     #[allow(dead_code)]
-    pub async fn is_commit_scanned(&self, oid: &str) -> bool {
+    pub async fn is_commit_scanned(&self, oid: &[u8; 20]) -> bool {
         sqlx::query("SELECT 1 FROM scanned_commits WHERE oid = ?")
-            .bind(oid)
+            .bind(oid.as_slice())
             .fetch_optional(&self.pool)
             .await
             .ok()
@@ -183,25 +183,34 @@ impl Database {
     }
 
     /// Load all scanned commit OIDs into a HashSet for fast lookup
-    pub async fn load_scanned_commit_oids(&self) -> rustc_hash::FxHashSet<String> {
-        sqlx::query_scalar("SELECT oid FROM scanned_commits")
+    /// Returns raw 20-byte SHA-1 hashes
+    pub async fn load_scanned_commit_oids(&self) -> rustc_hash::FxHashSet<[u8; 20]> {
+        let rows: Vec<Vec<u8>> = sqlx::query_scalar("SELECT oid FROM scanned_commits")
             .fetch_all(&self.pool)
             .await
-            .unwrap_or_default()
-            .into_iter()
+            .unwrap_or_default();
+        rows.into_iter()
+            .filter_map(|v| v.try_into().ok())
             .collect()
     }
 
     /// Load all previously seen blob OIDs
-    pub async fn load_seen_blobs(&self) -> Result<rustc_hash::FxHashSet<String>> {
+    /// Returns raw 20-byte SHA-1 hashes
+    pub async fn load_seen_blobs(&self) -> Result<rustc_hash::FxHashSet<[u8; 20]>> {
         let rows = sqlx::query("SELECT oid FROM seen_blobs")
             .fetch_all(&self.pool)
             .await?;
-        Ok(rows.iter().map(|row| row.get::<String, _>("oid")).collect())
+        Ok(rows.iter()
+            .filter_map(|row| {
+                let v: Vec<u8> = row.get("oid");
+                v.try_into().ok()
+            })
+            .collect())
     }
 
     /// Save batch of new blobs using multi-row INSERT for speed
-    pub async fn save_blobs(&self, blobs: &[(String, String, i64, i64)], progress: Option<&ProgressBar>) -> Result<()> {
+    /// OIDs are raw 20-byte SHA-1 hashes (stored as BLOB)
+    pub async fn save_blobs(&self, blobs: &[([u8; 20], String, i64, i64)], progress: Option<&ProgressBar>) -> Result<()> {
         const BATCH_SIZE: usize = 5000;
 
         // Use a single transaction for all batches
@@ -217,7 +226,7 @@ impl Database {
                 );
                 let mut query = sqlx::query(&sql);
                 for (oid, _, _, _) in chunk {
-                    query = query.bind(oid);
+                    query = query.bind(oid.as_slice());
                 }
                 query.execute(&mut *tx).await?;
             }
@@ -248,7 +257,8 @@ impl Database {
     }
 
     /// Save blob metadata for large blob detection using multi-row INSERT
-    pub async fn save_blob_metadata(&self, metadata: &[(String, i64, String, String, i64)], progress: Option<&ProgressBar>) -> Result<()> {
+    /// OIDs are raw 20-byte SHA-1 hashes (stored as BLOB)
+    pub async fn save_blob_metadata(&self, metadata: &[([u8; 20], i64, String, String, i64)], progress: Option<&ProgressBar>) -> Result<()> {
         const BATCH_SIZE: usize = 5000;
 
         // Use a single transaction for all batches
@@ -268,7 +278,7 @@ impl Database {
 
             let mut query = sqlx::query(&sql);
             for (oid, size, path, author, date) in chunk {
-                query = query.bind(oid).bind(size).bind(path).bind(author).bind(date);
+                query = query.bind(oid.as_slice()).bind(size).bind(path).bind(author).bind(date);
             }
             query.execute(&mut *tx).await?;
 
@@ -282,7 +292,8 @@ impl Database {
     }
 
     /// Mark commits as scanned using multi-row INSERT
-    pub async fn mark_commits_scanned(&self, oids: &[String]) -> Result<()> {
+    /// OIDs are raw 20-byte SHA-1 hashes (stored as BLOB)
+    pub async fn mark_commits_scanned(&self, oids: &[[u8; 20]]) -> Result<()> {
         const BATCH_SIZE: usize = 5000;
 
         // Use a single transaction for all batches
@@ -301,7 +312,7 @@ impl Database {
 
             let mut query = sqlx::query(&sql);
             for oid in chunk {
-                query = query.bind(oid);
+                query = query.bind(oid.as_slice());
             }
             query.execute(&mut *tx).await?;
         }

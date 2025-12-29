@@ -7,6 +7,13 @@ use repodiet::repository::Database;
 use repodiet::model::ExtensionStats;
 use std::collections::HashMap;
 
+/// Helper to create a 20-byte OID from a test identifier
+fn test_oid(id: u8) -> [u8; 20] {
+    let mut oid = [0u8; 20];
+    oid[0] = id;
+    oid
+}
+
 /// Helper to create test database with initialized schema
 async fn setup_db() -> Database {
     let db = common::create_test_db().await;
@@ -20,11 +27,11 @@ async fn test_tree_hierarchy_from_db() {
 
     // Save blobs with nested paths
     let blobs = vec![
-        ("oid1".to_string(), "src/main.rs".to_string(), 100i64, 100i64),
-        ("oid2".to_string(), "src/lib.rs".to_string(), 200i64, 200i64),
-        ("oid3".to_string(), "src/utils/helpers.rs".to_string(), 50i64, 50i64),
-        ("oid4".to_string(), "tests/test.rs".to_string(), 75i64, 75i64),
-        ("oid5".to_string(), "README.md".to_string(), 25i64, 25i64),
+        (test_oid(1), "src/main.rs".to_string(), 100i64, 100i64),
+        (test_oid(2), "src/lib.rs".to_string(), 200i64, 200i64),
+        (test_oid(3), "src/utils/helpers.rs".to_string(), 50i64, 50i64),
+        (test_oid(4), "tests/test.rs".to_string(), 75i64, 75i64),
+        (test_oid(5), "README.md".to_string(), 25i64, 25i64),
     ];
     db.save_blobs(&blobs, None).await.unwrap();
 
@@ -52,9 +59,9 @@ async fn test_size_aggregation_on_load() {
 
     // Save blobs in nested structure
     let blobs = vec![
-        ("oid1".to_string(), "src/a.rs".to_string(), 100i64, 50i64),
-        ("oid2".to_string(), "src/b.rs".to_string(), 200i64, 100i64),
-        ("oid3".to_string(), "src/sub/c.rs".to_string(), 300i64, 150i64),
+        (test_oid(1), "src/a.rs".to_string(), 100i64, 50i64),
+        (test_oid(2), "src/b.rs".to_string(), 200i64, 100i64),
+        (test_oid(3), "src/sub/c.rs".to_string(), 300i64, 150i64),
     ];
     db.save_blobs(&blobs, None).await.unwrap();
 
@@ -81,9 +88,9 @@ async fn test_deleted_files_marked() {
 
     // Save blobs - some with current_size=0 (deleted)
     let blobs = vec![
-        ("oid1".to_string(), "existing.txt".to_string(), 100i64, 100i64),
-        ("oid2".to_string(), "deleted.txt".to_string(), 200i64, 0i64),
-        ("oid3".to_string(), "src/also_deleted.rs".to_string(), 300i64, 0i64),
+        (test_oid(1), "existing.txt".to_string(), 100i64, 100i64),
+        (test_oid(2), "deleted.txt".to_string(), 200i64, 0i64),
+        (test_oid(3), "src/also_deleted.rs".to_string(), 300i64, 0i64),
     ];
     db.save_blobs(&blobs, None).await.unwrap();
 
@@ -111,12 +118,12 @@ async fn test_extension_stats_from_tree() {
 
     // Save blobs with different extensions
     let blobs = vec![
-        ("oid1".to_string(), "src/main.rs".to_string(), 100i64, 100i64),
-        ("oid2".to_string(), "src/lib.rs".to_string(), 200i64, 200i64),
-        ("oid3".to_string(), "assets/logo.png".to_string(), 500i64, 500i64),
-        ("oid4".to_string(), "assets/icon.png".to_string(), 300i64, 300i64),
-        ("oid5".to_string(), "README.md".to_string(), 50i64, 50i64),
-        ("oid6".to_string(), "Makefile".to_string(), 25i64, 25i64), // No extension
+        (test_oid(1), "src/main.rs".to_string(), 100i64, 100i64),
+        (test_oid(2), "src/lib.rs".to_string(), 200i64, 200i64),
+        (test_oid(3), "assets/logo.png".to_string(), 500i64, 500i64),
+        (test_oid(4), "assets/icon.png".to_string(), 300i64, 300i64),
+        (test_oid(5), "README.md".to_string(), 50i64, 50i64),
+        (test_oid(6), "Makefile".to_string(), 25i64, 25i64), // No extension
     ];
     db.save_blobs(&blobs, None).await.unwrap();
 
