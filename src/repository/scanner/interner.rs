@@ -34,8 +34,8 @@ impl PathInterner {
     }
 
     /// Get the string representation of a path ID
-    pub fn get_str(&self, id: PathId) -> String {
-        String::from_utf8_lossy(self.vec[id.0 as usize].as_ref()).into_owned()
+    pub fn get_str(&self, id: PathId) -> std::borrow::Cow<'_, str> {
+        String::from_utf8_lossy(self.vec[id.0 as usize].as_ref())
     }
 
     /// Get the raw bytes of a path ID (avoids UTF-8 conversion)
