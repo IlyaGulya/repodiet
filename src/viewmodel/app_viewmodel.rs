@@ -52,6 +52,44 @@ impl AppViewModel {
         self.view_mode == ViewMode::Search
     }
 
+    fn move_up_current(&mut self) {
+        match self.view_mode {
+            ViewMode::Tree => self.tree_vm.move_up(),
+            ViewMode::ByExtension => self.extension_vm.move_up(),
+            ViewMode::LargeBlobs => self.blobs_vm.move_up(),
+            ViewMode::Search => self.search_vm.move_up(),
+        }
+    }
+
+    fn move_down_current(&mut self) {
+        match self.view_mode {
+            ViewMode::Tree => self.tree_vm.move_down(),
+            ViewMode::ByExtension => self.extension_vm.move_down(),
+            ViewMode::LargeBlobs => self.blobs_vm.move_down(),
+            ViewMode::Search => self.search_vm.move_down(),
+        }
+    }
+
+    fn enter_current(&mut self) {
+        match self.view_mode {
+            ViewMode::Tree => self.tree_vm.enter_selected(),
+            ViewMode::LargeBlobs => {
+                if let Some(path) = self.blobs_vm.selected_path() {
+                    self.tree_vm.navigate_to_path(path);
+                    self.view_mode = ViewMode::Tree;
+                }
+            }
+            ViewMode::Search => {
+                if let Some(path) = self.search_vm.selected_path() {
+                    self.tree_vm.navigate_to_path(path);
+                    self.search_vm.clear();
+                    self.view_mode = ViewMode::Tree;
+                }
+            }
+            ViewMode::ByExtension => {}
+        }
+    }
+
     /// Handle a user intent and return the action to take
     pub fn handle_intent(&mut self, intent: Intent) -> Action {
         match intent {
@@ -82,45 +120,17 @@ impl AppViewModel {
             }
 
             Intent::MoveUp => {
-                match self.view_mode {
-                    ViewMode::Tree => self.tree_vm.move_up(),
-                    ViewMode::ByExtension => self.extension_vm.move_up(),
-                    ViewMode::LargeBlobs => self.blobs_vm.move_up(),
-                    ViewMode::Search => self.search_vm.move_up(),
-                }
+                self.move_up_current();
                 Action::Redraw
             }
 
             Intent::MoveDown => {
-                match self.view_mode {
-                    ViewMode::Tree => self.tree_vm.move_down(),
-                    ViewMode::ByExtension => self.extension_vm.move_down(),
-                    ViewMode::LargeBlobs => self.blobs_vm.move_down(),
-                    ViewMode::Search => self.search_vm.move_down(),
-                }
+                self.move_down_current();
                 Action::Redraw
             }
 
             Intent::Enter => {
-                match self.view_mode {
-                    ViewMode::Tree => {
-                        self.tree_vm.enter_selected();
-                    }
-                    ViewMode::LargeBlobs => {
-                        if let Some(path) = self.blobs_vm.selected_path() {
-                            self.tree_vm.navigate_to_path(path);
-                            self.view_mode = ViewMode::Tree;
-                        }
-                    }
-                    ViewMode::Search => {
-                        if let Some(path) = self.search_vm.selected_path() {
-                            self.tree_vm.navigate_to_path(path);
-                            self.search_vm.clear();
-                            self.view_mode = ViewMode::Tree;
-                        }
-                    }
-                    _ => {}
-                }
+                self.enter_current();
                 Action::Redraw
             }
 
