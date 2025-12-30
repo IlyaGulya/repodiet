@@ -76,25 +76,25 @@ async fn test_search_across_scanned_data() {
     }
 
     // Verify results
-    let results = vm.results();
-    assert!(!results.is_empty());
+    let paths: Vec<_> = vm.results().map(|(p, _, _)| p).collect();
+    assert!(!paths.is_empty());
 
     // Should find all .rs files
-    assert!(results.iter().any(|r| r.path.ends_with("main.rs")));
-    assert!(results.iter().any(|r| r.path.ends_with("lib.rs")));
-    assert!(results.iter().any(|r| r.path.ends_with("utils.rs")));
-    assert!(results.iter().any(|r| r.path.ends_with("test_main.rs")));
+    assert!(paths.iter().any(|p| p.ends_with("main.rs")));
+    assert!(paths.iter().any(|p| p.ends_with("lib.rs")));
+    assert!(paths.iter().any(|p| p.ends_with("utils.rs")));
+    assert!(paths.iter().any(|p| p.ends_with("test_main.rs")));
 
     // Should NOT find README.md
-    assert!(!results.iter().any(|r| r.path.ends_with("README.md")));
+    assert!(!paths.iter().any(|p| p.ends_with("README.md")));
 
     // Test case-insensitive search - clear and search for readme
     vm.clear();
     for c in "readme".chars() {
         vm.add_char(c);
     }
-    let results = vm.results();
-    assert!(results.iter().any(|r| r.path.contains("README")));
+    let paths: Vec<_> = vm.results().map(|(p, _, _)| p).collect();
+    assert!(paths.iter().any(|p| p.contains("README")));
 }
 
 #[tokio::test]

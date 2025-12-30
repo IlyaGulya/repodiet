@@ -9,7 +9,7 @@ mod common;
 fn bench_search_add_char(c: &mut Criterion) {
     let mut group = c.benchmark_group("search_add_char");
     for size in [1_000, 10_000, 50_000] {
-        let tree = common::generate_tree(size);
+        let tree = common::generate_tree_arc(size);
 
         group.bench_with_input(
             BenchmarkId::new("files", size),
@@ -21,7 +21,7 @@ fn bench_search_add_char(c: &mut Criterion) {
                     vm.add_char('.');
                     vm.add_char('r');
                     vm.add_char('s');
-                    black_box(vm.results().len())
+                    black_box(vm.results().count())
                 });
             },
         );
@@ -32,7 +32,7 @@ fn bench_search_add_char(c: &mut Criterion) {
 fn bench_search_full_query(c: &mut Criterion) {
     let mut group = c.benchmark_group("search_full_query");
     for size in [1_000, 10_000, 50_000] {
-        let tree = common::generate_tree(size);
+        let tree = common::generate_tree_arc(size);
 
         group.bench_with_input(
             BenchmarkId::new("files", size),
@@ -44,7 +44,7 @@ fn bench_search_full_query(c: &mut Criterion) {
                     for c in "file_500".chars() {
                         vm.add_char(c);
                     }
-                    black_box(vm.results().len())
+                    black_box(vm.results().count())
                 });
             },
         );
@@ -57,7 +57,7 @@ fn bench_search_results_sort(c: &mut Criterion) {
     // Test with realistic result counts
     for result_target in [100, 1000, 5000] {
         // Generate tree with many matching files
-        let tree = common::generate_tree(result_target * 10);
+        let tree = common::generate_tree_arc(result_target * 10);
 
         group.bench_with_input(
             BenchmarkId::new("results", result_target),
@@ -69,7 +69,7 @@ fn bench_search_results_sort(c: &mut Criterion) {
                     vm.add_char('.');
                     vm.add_char('r');
                     vm.add_char('s');
-                    black_box(vm.results().len())
+                    black_box(vm.results().count())
                 });
             },
         );

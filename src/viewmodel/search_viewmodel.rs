@@ -1,26 +1,45 @@
 use std::sync::Arc;
 
-use crate::model::{SearchResult, TreeNode};
+use crate::model::TreeNode;
 
 use super::selection::Selectable;
+
+/// Precomputed entry for fast searching
+struct SearchEntry {
+    path: String,
+    path_lower: String,
+    cumulative_size: u64,
+    current_size: u64,
+}
 
 /// ViewModel for search functionality
 pub struct SearchViewModel {
     query: String,
-    results: Vec<SearchResult>,
+    result_indices: Vec<usize>,
     selected_index: usize,
-    root: Arc<TreeNode>,
+    entries: Vec<SearchEntry>,
     total_cumulative: u64,
 }
 
 impl SearchViewModel {
     pub fn new(root: Arc<TreeNode>) -> Self {
         let total_cumulative = root.cumulative_size;
+        let mut entries = Vec::new();
+
+        root.visit_leaves(|path, node| {
+            entries.push(SearchEntry {
+                path_lower: path.to_lowercase(),
+                path: path.to_string(),
+                cumulative_size: node.cumulative_size,
+                current_size: node.current_size,
+            });
+        });
+
         Self {
             query: String::new(),
-            results: Vec::new(),
+            result_indices: Vec::new(),
             selected_index: 0,
-            root,
+            entries,
             total_cumulative,
         }
     }
@@ -29,8 +48,11 @@ impl SearchViewModel {
         &self.query
     }
 
-    pub fn results(&self) -> &[SearchResult] {
-        &self.results
+    pub fn results(&self) -> impl Iterator<Item = (&str, u64, u64)> + '_ {
+        self.result_indices.iter().map(|&i| {
+            let e = &self.entries[i];
+            (e.path.as_str(), e.cumulative_size, e.current_size)
+        })
     }
 
     pub fn selected_index(&self) -> usize {
@@ -53,66 +75,45 @@ impl SearchViewModel {
 
     pub fn clear(&mut self) {
         self.query.clear();
-        self.results.clear();
+        self.result_indices.clear();
         self.selected_index = 0;
     }
 
     fn update_results(&mut self) {
         if self.query.is_empty() {
-            self.results.clear();
+            self.result_indices.clear();
+            self.selected_index = 0;
             return;
         }
 
         let query_lower = self.query.to_lowercase();
-        let mut results = Vec::new();
 
-        fn search_recursive(
-            node: &TreeNode,
-            path: &str,
-            query: &str,
-            results: &mut Vec<SearchResult>,
-        ) {
-            let full_path = if path.is_empty() {
-                node.name.clone()
-            } else {
-                format!("{}/{}", path, node.name)
-            };
+        let mut matched: Vec<_> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.path_lower.contains(&query_lower))
+            .map(|(i, e)| (i, e.cumulative_size))
+            .collect();
 
-            if node.children.is_empty() {
-                if full_path.to_lowercase().contains(query) {
-                    results.push(SearchResult {
-                        path: full_path.clone(),
-                        cumulative_size: node.cumulative_size,
-                        current_size: node.current_size,
-                    });
-                }
-            }
+        matched.sort_by(|a, b| b.1.cmp(&a.1));
+        matched.truncate(100);
 
-            for child in node.children.values() {
-                search_recursive(child, &full_path, query, results);
-            }
-        }
-
-        for child in self.root.children.values() {
-            search_recursive(child, "", &query_lower, &mut results);
-        }
-
-        results.sort_by(|a, b| b.cumulative_size.cmp(&a.cumulative_size));
-        results.truncate(100);
-
-        self.results = results;
+        self.result_indices = matched.into_iter().map(|(i, _)| i).collect();
         self.selected_index = 0;
     }
 
     /// Get selected result's path
     pub fn selected_path(&self) -> Option<&str> {
-        self.results.get(self.selected_index).map(|r| r.path.as_str())
+        self.result_indices
+            .get(self.selected_index)
+            .map(|&i| self.entries[i].path.as_str())
     }
 }
 
 impl Selectable for SearchViewModel {
     fn len(&self) -> usize {
-        self.results.len()
+        self.result_indices.len() // O(1)
     }
 
     fn selected(&self) -> usize {
@@ -146,7 +147,7 @@ mod tests {
         vm.add_char('r');
         vm.add_char('s');
 
-        assert_eq!(vm.results().len(), 2);
+        assert_eq!(vm.results().count(), 2);
     }
 
     #[test]
@@ -158,7 +159,7 @@ mod tests {
             vm.add_char(c);
         }
 
-        assert_eq!(vm.results().len(), 1);
+        assert_eq!(vm.results().count(), 1);
     }
 
     #[test]
@@ -166,6 +167,6 @@ mod tests {
         let tree = create_test_tree();
         let vm = SearchViewModel::new(tree);
 
-        assert!(vm.results().is_empty());
+        assert_eq!(vm.results().count(), 0);
     }
 }

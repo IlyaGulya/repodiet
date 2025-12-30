@@ -80,6 +80,50 @@ impl TreeNode {
     pub fn deleted_cumulative_size(&self) -> u64 {
         self.deleted_size
     }
+
+    /// Visits all leaf nodes, calling `f` with the full path and node.
+    /// Uses a reusable path buffer - only allocates once per leaf when caller clones.
+    pub fn visit_leaves(&self, mut f: impl FnMut(&str, &TreeNode)) {
+        // Stack stores (node, base_len) where base_len is path length before this node
+        let mut stack: Vec<(&TreeNode, usize)> = Vec::new();
+        let mut path = String::new();
+
+        // Seed with root's children
+        for child in self.children.values() {
+            stack.push((child, 0));
+        }
+
+        while let Some((node, base_len)) = stack.pop() {
+            // Truncate path back to before this node's name
+            path.truncate(base_len);
+            if !path.is_empty() {
+                path.push('/');
+            }
+            path.push_str(&node.name);
+
+            if node.children.is_empty() {
+                f(&path, node);
+            } else {
+                let current_len = path.len();
+                for child in node.children.values() {
+                    stack.push((child, current_len));
+                }
+            }
+        }
+    }
+
+    /// Visits all leaf nodes without path allocation.
+    /// Use when you only need node data, not paths.
+    pub fn visit_leaf_nodes(&self, mut f: impl FnMut(&TreeNode)) {
+        let mut stack: Vec<&TreeNode> = self.children.values().collect();
+        while let Some(node) = stack.pop() {
+            if node.children.is_empty() {
+                f(node);
+            } else {
+                stack.extend(node.children.values());
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -153,5 +197,46 @@ mod tests {
         let main = src.children.get("main.rs").unwrap();
         assert_eq!(main.cumulative_size, 1000);
         assert_eq!(main.current_size, 500);
+    }
+
+    #[test]
+    fn test_visit_leaves() {
+        let tree = create_test_tree();
+
+        let mut paths = Vec::new();
+        tree.visit_leaves(|path, _| paths.push(path.to_string()));
+
+        // Should have 7 leaf nodes (files)
+        assert_eq!(paths.len(), 7);
+
+        // All should have paths
+        assert!(paths.iter().any(|p| p.ends_with("main.rs")));
+        assert!(paths.iter().any(|p| p.ends_with("lib.rs")));
+        assert!(paths.iter().any(|p| p.ends_with("helper.rs")));
+        assert!(paths.iter().any(|p| p.ends_with("logo.png")));
+        assert!(paths.iter().any(|p| p.ends_with("icon.png")));
+        assert!(paths.iter().any(|p| p == "README.md"));
+        assert!(paths.iter().any(|p| p == "Cargo.toml"));
+
+        // Paths should include full path
+        assert!(paths.iter().any(|p| p == "src/main.rs" || p == "src/lib.rs"));
+    }
+
+    #[test]
+    fn test_visit_leaf_nodes() {
+        let tree = create_test_tree();
+
+        let mut total_size = 0u64;
+        let mut count = 0usize;
+        tree.visit_leaf_nodes(|node| {
+            total_size += node.cumulative_size;
+            count += 1;
+        });
+
+        // Should have 7 leaf nodes (files)
+        assert_eq!(count, 7);
+
+        // Verify we can access node data
+        assert_eq!(total_size, tree.cumulative_size);
     }
 }

@@ -70,33 +70,31 @@ fn render_header(frame: &mut Frame, vm: &SearchViewModel, area: Rect) {
 
 fn render_results(frame: &mut Frame, vm: &SearchViewModel, area: Rect) {
     let total_cumulative = vm.total_cumulative();
-    let results = vm.results();
     let query = vm.query();
 
-    let items: Vec<ListItem> = results
-        .iter()
-        .map(|result| {
-            let percent = ui_fmt::percent(result.cumulative_size, total_cumulative);
-            let bloat = ui_fmt::bloat_ratio(result.cumulative_size, result.current_size);
-            let bloat_str = ui_fmt::bloat_str(result.cumulative_size, result.current_size);
+    let items: Vec<ListItem> = vm
+        .results()
+        .map(|(path, cumulative_size, current_size)| {
+            let percent = ui_fmt::percent(cumulative_size, total_cumulative);
+            let bloat = ui_fmt::bloat_ratio(cumulative_size, current_size);
+            let bloat_str = ui_fmt::bloat_str(cumulative_size, current_size);
             let bar = ui_fmt::bar(percent, 15);
             let bloat_color = ui_fmt::bloat_color(bloat);
 
             let mut spans = vec![
-                Span::styled(format!("{:>10}", format_size(result.cumulative_size)), Style::default().fg(Color::Cyan)),
+                Span::styled(format!("{:>10}", format_size(cumulative_size)), Style::default().fg(Color::Cyan)),
                 Span::raw(" "),
                 Span::styled(format!("[{}]", bar), Style::default().fg(Color::Blue)),
                 Span::raw(" "),
                 Span::styled(format!("{:>5}", bloat_str), Style::default().fg(bloat_color)),
                 Span::raw("  "),
             ];
-            spans.extend(highlight_matches(&result.path, query));
+            spans.extend(highlight_matches(path, query));
 
             ListItem::new(Line::from(spans))
         })
         .collect();
-
-    let result_count = results.len();
+    let result_count = items.len();
     let mut list_state = ListState::default();
     list_state.select(Some(vm.selected_index()));
 

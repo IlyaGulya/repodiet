@@ -4,6 +4,7 @@
 
 use criterion::async_executor::AsyncExecutor;
 use repodiet::model::TreeNode;
+use std::sync::Arc;
 use repodiet::repository::{BlobMetaRecord, BlobRecord, Database};
 use git2::{Repository, Signature};
 use std::borrow::Cow;
@@ -53,6 +54,11 @@ fn generate_tree_generic(num_paths: usize, current_size: impl Fn(usize) -> u64) 
 /// Generate a tree with N paths for benchmarking
 pub fn generate_tree(num_paths: usize) -> TreeNode {
     generate_tree_generic(num_paths, |i| (i * 50) as u64)
+}
+
+/// Generate a tree wrapped in Arc for search benchmarks
+pub fn generate_tree_arc(num_paths: usize) -> Arc<TreeNode> {
+    Arc::new(generate_tree(num_paths))
 }
 
 /// Generate a tree with some deleted files for benchmarking deletion detection

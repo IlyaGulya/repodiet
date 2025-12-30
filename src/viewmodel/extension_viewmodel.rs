@@ -40,28 +40,23 @@ impl ExtensionViewModel {
     fn compute_stats(root: &TreeNode) -> Vec<ExtensionStatsView> {
         let mut stats: HashMap<String, ExtensionStats> = HashMap::new();
 
-        fn collect_leaves(node: &TreeNode, stats: &mut HashMap<String, ExtensionStats>) {
-            if node.children.is_empty() {
-                let ext = node.name.rsplit('.')
-                    .next()
-                    .filter(|e| e.len() <= 10 && !e.contains('/'))
-                    .map(|e| format!(".{}", e.to_lowercase()))
-                    .unwrap_or_else(|| "(no ext)".to_string());
+        root.visit_leaf_nodes(|node| {
+            let ext = node
+                .name
+                .rsplit_once('.')
+                .map(|(_, e)| e)
+                .filter(|e| !e.is_empty() && e.len() <= 10 && !e.contains('/'))
+                .map(|e| format!(".{}", e.to_lowercase()))
+                .unwrap_or_else(|| "(no ext)".to_string());
 
-                let entry = stats.entry(ext).or_default();
-                entry.cumulative_size += node.cumulative_size;
-                entry.current_size += node.current_size;
-                entry.file_count += node.blob_count;
-            } else {
-                for child in node.children.values() {
-                    collect_leaves(child, stats);
-                }
-            }
-        }
+            let entry = stats.entry(ext).or_default();
+            entry.cumulative_size += node.cumulative_size;
+            entry.current_size += node.current_size;
+            entry.file_count += node.blob_count;
+        });
 
-        collect_leaves(root, &mut stats);
-
-        let mut result: Vec<_> = stats.into_iter()
+        let mut result: Vec<_> = stats
+            .into_iter()
             .map(|(ext, s)| ExtensionStatsView {
                 extension: ext,
                 cumulative_size: s.cumulative_size,
