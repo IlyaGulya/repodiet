@@ -76,7 +76,7 @@ async fn test_search_across_scanned_data() {
     }
 
     // Verify results
-    let paths: Vec<_> = vm.results().map(|(p, _, _)| p).collect();
+    let paths: Vec<_> = vm.results().map(|r| r.path).collect();
     assert!(!paths.is_empty());
 
     // Should find all .rs files
@@ -93,7 +93,7 @@ async fn test_search_across_scanned_data() {
     for c in "readme".chars() {
         vm.add_char(c);
     }
-    let paths: Vec<_> = vm.results().map(|(p, _, _)| p).collect();
+    let paths: Vec<_> = vm.results().map(|r| r.path).collect();
     assert!(paths.iter().any(|p| p.contains("README")));
 }
 

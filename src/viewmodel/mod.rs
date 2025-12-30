@@ -7,6 +7,6 @@ mod selection;
 
 pub use tree_viewmodel::TreeViewModel;
 pub use extension_viewmodel::ExtensionViewModel;
-pub use search_viewmodel::SearchViewModel;
+pub use search_viewmodel::{SearchViewModel, SearchResult};
 pub use blobs_viewmodel::BlobsViewModel;
 pub use app_viewmodel::{AppViewModel, ViewMode, Action};

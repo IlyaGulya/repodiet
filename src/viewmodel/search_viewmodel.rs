@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::sync::Arc;
 
 use crate::model::TreeNode;
@@ -12,10 +13,32 @@ struct SearchEntry {
     current_size: u64,
 }
 
+/// Find all non-overlapping matches of `query` in `text`, returning byte ranges.
+/// Both strings must already be lowercased.
+fn find_matches(text: &str, query: &str) -> Vec<Range<usize>> {
+    text.match_indices(query)
+        .map(|(start, matched)| start..start + matched.len())
+        .collect()
+}
+
+/// A search result with match ranges for highlighting
+pub struct SearchResult<'a> {
+    pub path: &'a str,
+    pub cumulative_size: u64,
+    pub current_size: u64,
+    pub matches: &'a [Range<usize>],
+}
+
+/// A matched result with its index and match ranges
+struct MatchedResult {
+    index: usize,
+    matches: Vec<Range<usize>>,
+}
+
 /// ViewModel for search functionality
 pub struct SearchViewModel {
     query: String,
-    result_indices: Vec<usize>,
+    results: Vec<MatchedResult>,
     selected_index: usize,
     entries: Vec<SearchEntry>,
     total_cumulative: u64,
@@ -37,7 +60,7 @@ impl SearchViewModel {
 
         Self {
             query: String::new(),
-            result_indices: Vec::new(),
+            results: Vec::new(),
             selected_index: 0,
             entries,
             total_cumulative,
@@ -48,10 +71,15 @@ impl SearchViewModel {
         &self.query
     }
 
-    pub fn results(&self) -> impl Iterator<Item = (&str, u64, u64)> + '_ {
-        self.result_indices.iter().map(|&i| {
-            let e = &self.entries[i];
-            (e.path.as_str(), e.cumulative_size, e.current_size)
+    pub fn results(&self) -> impl Iterator<Item = SearchResult<'_>> + '_ {
+        self.results.iter().map(|r| {
+            let e = &self.entries[r.index];
+            SearchResult {
+                path: &e.path,
+                cumulative_size: e.cumulative_size,
+                current_size: e.current_size,
+                matches: &r.matches,
+            }
         })
     }
 
@@ -75,13 +103,13 @@ impl SearchViewModel {
 
     pub fn clear(&mut self) {
         self.query.clear();
-        self.result_indices.clear();
+        self.results.clear();
         self.selected_index = 0;
     }
 
     fn update_results(&mut self) {
         if self.query.is_empty() {
-            self.result_indices.clear();
+            self.results.clear();
             self.selected_index = 0;
             return;
         }
@@ -92,28 +120,37 @@ impl SearchViewModel {
             .entries
             .iter()
             .enumerate()
-            .filter(|(_, e)| e.path_lower.contains(&query_lower))
-            .map(|(i, e)| (i, e.cumulative_size))
+            .filter_map(|(i, e)| {
+                let matches = find_matches(&e.path_lower, &query_lower);
+                if matches.is_empty() {
+                    None
+                } else {
+                    Some((i, e.cumulative_size, matches))
+                }
+            })
             .collect();
 
         matched.sort_by(|a, b| b.1.cmp(&a.1));
         matched.truncate(100);
 
-        self.result_indices = matched.into_iter().map(|(i, _)| i).collect();
+        self.results = matched
+            .into_iter()
+            .map(|(index, _, matches)| MatchedResult { index, matches })
+            .collect();
         self.selected_index = 0;
     }
 
     /// Get selected result's path
     pub fn selected_path(&self) -> Option<&str> {
-        self.result_indices
+        self.results
             .get(self.selected_index)
-            .map(|&i| self.entries[i].path.as_str())
+            .map(|r| self.entries[r.index].path.as_str())
     }
 }
 
 impl Selectable for SearchViewModel {
     fn len(&self) -> usize {
-        self.result_indices.len() // O(1)
+        self.results.len()
     }
 
     fn selected(&self) -> usize {
