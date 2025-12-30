@@ -46,22 +46,11 @@ fn render_results(frame: &mut Frame, vm: &SearchViewModel, area: Rect) {
     let items: Vec<ListItem> = results
         .iter()
         .map(|result| {
-            let percent = if total_cumulative > 0 {
-                result.cumulative_size as f64 / total_cumulative as f64 * 100.0
-            } else {
-                0.0
-            };
-
-            let bloat = if result.current_size > 0 {
-                result.cumulative_size as f64 / result.current_size as f64
-            } else {
-                f64::INFINITY
-            };
-
+            let percent = ui_fmt::percent(result.cumulative_size, total_cumulative);
+            let bloat = ui_fmt::bloat_ratio(result.cumulative_size, result.current_size);
             let bloat_str = ui_fmt::bloat_str(result.cumulative_size, result.current_size);
             let bar = ui_fmt::bar(percent, 15);
-
-            let bloat_color = if bloat > 50.0 { Color::Red } else if bloat > 20.0 { Color::Yellow } else { Color::Green };
+            let bloat_color = ui_fmt::bloat_color(bloat);
 
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{:>10}", format_size(result.cumulative_size)), Style::default().fg(Color::Cyan)),

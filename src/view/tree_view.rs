@@ -66,11 +66,7 @@ fn render_list(frame: &mut Frame, vm: &TreeViewModel, area: Rect) {
     let items: Vec<ListItem> = children
         .iter()
         .map(|node| {
-            let percent = if total_for_percent > 0 {
-                node.display_size as f64 / total_for_percent as f64 * 100.0
-            } else {
-                0.0
-            };
+            let percent = ui_fmt::percent(node.display_size, total_for_percent);
 
             let bloat_str = if show_deleted {
                 "DEL".to_string()

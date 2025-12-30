@@ -47,12 +47,7 @@ fn render_list(frame: &mut Frame, vm: &BlobsViewModel, area: Rect) {
     let items: Vec<ListItem> = blobs
         .iter()
         .map(|blob| {
-            let percent = if total_cumulative > 0 {
-                blob.size as f64 / total_cumulative as f64 * 100.0
-            } else {
-                0.0
-            };
-
+            let percent = ui_fmt::percent(blob.size, total_cumulative);
             let bar = ui_fmt::bar(percent, 12);
 
             let date_str = format_timestamp(blob.first_date);

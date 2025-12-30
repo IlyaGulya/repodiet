@@ -48,22 +48,11 @@ fn render_list(frame: &mut Frame, vm: &ExtensionViewModel, area: Rect) {
     let items: Vec<ListItem> = stats
         .iter()
         .map(|stat| {
-            let percent = if total_cumulative > 0 {
-                stat.cumulative_size as f64 / total_cumulative as f64 * 100.0
-            } else {
-                0.0
-            };
-
-            let bloat = if stat.current_size > 0 {
-                stat.cumulative_size as f64 / stat.current_size as f64
-            } else {
-                f64::INFINITY
-            };
-
+            let percent = ui_fmt::percent(stat.cumulative_size, total_cumulative);
+            let bloat = ui_fmt::bloat_ratio(stat.cumulative_size, stat.current_size);
             let bloat_str = ui_fmt::bloat_str(stat.cumulative_size, stat.current_size);
             let bar = ui_fmt::bar(percent, 20);
-
-            let bloat_color = if bloat > 50.0 { Color::Red } else if bloat > 20.0 { Color::Yellow } else { Color::Green };
+            let bloat_color = ui_fmt::bloat_color(bloat);
 
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{:>12}", &stat.extension), Style::default().fg(Color::Yellow)),
