@@ -12,6 +12,48 @@ use super::progress::ProgressReporter;
 use super::store::ScanStore;
 use super::types::ScanDelta;
 
+fn oid20(oid: ObjectId) -> [u8; 20] {
+    oid.as_bytes().try_into().unwrap()
+}
+
+fn convert_delta<'a>(
+    delta: &'a ScanDelta,
+    interner: &'a PathInterner,
+) -> (Vec<BlobRecord<'a>>, Vec<BlobMetaRecord<'a>>) {
+    let blobs = delta
+        .blobs
+        .iter()
+        .map(|row| {
+            BlobRecord::new(
+                oid20(row.oid),
+                interner.get_str(row.path_id),
+                row.cumulative_size,
+                row.current_size,
+            )
+        })
+        .collect();
+
+    let metadata = delta
+        .metadata
+        .iter()
+        .map(|row| {
+            BlobMetaRecord::new(
+                oid20(row.oid),
+                row.size,
+                interner.get_str(row.path_id),
+                row.author.clone(),
+                row.timestamp,
+            )
+        })
+        .collect();
+
+    (blobs, metadata)
+}
+
+fn convert_commits(commits: &[ObjectId]) -> Vec<[u8; 20]> {
+    commits.iter().map(|o| oid20(*o)).collect()
+}
+
 impl ScanStore for Database {
     async fn get_head_oid(&self) -> Option<String> {
         self.get_metadata("head_oid").await
@@ -43,38 +85,14 @@ impl ScanStore for Database {
             return Ok(());
         }
 
-        // Convert BlobRow to database records
-        let blobs_for_db: Vec<BlobRecord<'_>> = delta
-            .blobs
-            .iter()
-            .map(|row| BlobRecord::new(
-                row.oid.as_bytes().try_into().unwrap(),
-                interner.get_str(row.path_id),
-                row.cumulative_size,
-                row.current_size,
-            ))
-            .collect();
+        let (blobs_for_db, metadata_for_db) = convert_delta(delta, interner);
 
-        // Save blobs with progress
         let pb = progress.start("Indexing", blobs_for_db.len() as u64);
         self.save_blobs_with_callback(&blobs_for_db, |n| pb.inc(n as u64))
             .await?;
         pb.finish();
 
-        // Convert BlobMetaRow to database records
-        if !delta.metadata.is_empty() {
-            let metadata_for_db: Vec<BlobMetaRecord<'_>> = delta
-                .metadata
-                .iter()
-                .map(|row| BlobMetaRecord::new(
-                    row.oid.as_bytes().try_into().unwrap(),
-                    row.size,
-                    interner.get_str(row.path_id),
-                    row.author.clone(),
-                    row.timestamp,
-                ))
-                .collect();
-
+        if !metadata_for_db.is_empty() {
             let pb = progress.start("Indexing metadata", metadata_for_db.len() as u64);
             self.save_blob_metadata_with_callback(&metadata_for_db, |n| pb.inc(n as u64))
                 .await?;
@@ -89,11 +107,7 @@ impl ScanStore for Database {
             return Ok(());
         }
 
-        let commit_oids: Vec<[u8; 20]> = commits
-            .iter()
-            .map(|o| o.as_bytes().try_into().unwrap())
-            .collect();
-        Database::mark_commits_scanned(self, &commit_oids).await
+        Database::mark_commits_scanned(self, &convert_commits(commits)).await
     }
 
     async fn load_tree(&self) -> Result<TreeNode> {
@@ -107,39 +121,8 @@ impl ScanStore for Database {
         interner: &PathInterner,
         progress: &dyn ProgressReporter,
     ) -> Result<()> {
-        // Convert BlobRow to database records
-        let blobs_for_db: Vec<BlobRecord<'_>> = delta
-            .blobs
-            .iter()
-            .map(|row| {
-                BlobRecord::new(
-                    row.oid.as_bytes().try_into().unwrap(),
-                    interner.get_str(row.path_id),
-                    row.cumulative_size,
-                    row.current_size,
-                )
-            })
-            .collect();
-
-        // Convert BlobMetaRow to database records
-        let metadata_for_db: Vec<BlobMetaRecord<'_>> = delta
-            .metadata
-            .iter()
-            .map(|row| {
-                BlobMetaRecord::new(
-                    row.oid.as_bytes().try_into().unwrap(),
-                    row.size,
-                    interner.get_str(row.path_id),
-                    row.author.clone(),
-                    row.timestamp,
-                )
-            })
-            .collect();
-
-        let commit_oids: Vec<[u8; 20]> = commits
-            .iter()
-            .map(|o| o.as_bytes().try_into().unwrap())
-            .collect();
+        let (blobs_for_db, metadata_for_db) = convert_delta(delta, interner);
+        let commit_oids = convert_commits(commits);
 
         let pb_blobs = progress.start("Indexing", blobs_for_db.len() as u64);
         let pb_meta = progress.start("Indexing metadata", metadata_for_db.len() as u64);
