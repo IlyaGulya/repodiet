@@ -16,7 +16,7 @@ fn bench_save_blobs(c: &mut Criterion) {
             |b, blobs| {
                 b.to_async(common::tokio_executor()).iter(|| async {
                     let db = common::setup_bench_db().await;
-                    db.save_blobs(blobs, None).await.unwrap();
+                    db.save_blobs_with_callback(blobs, |_| {}).await.unwrap();
                     black_box(db)
                 });
             },
@@ -38,7 +38,7 @@ fn bench_load_tree(c: &mut Criterion) {
                     let blobs = blobs.clone();
                     async move {
                         let db = common::setup_bench_db().await;
-                        db.save_blobs(&blobs, None).await.unwrap();
+                        db.save_blobs_with_callback(&blobs, |_| {}).await.unwrap();
                         black_box(db.load_tree().await.unwrap())
                     }
                 });
@@ -62,7 +62,7 @@ fn bench_get_top_blobs(c: &mut Criterion) {
                     let metadata = metadata.clone();
                     async move {
                         let db = common::setup_bench_db().await;
-                        db.save_blob_metadata(&metadata, None).await.unwrap();
+                        db.save_blob_metadata_with_callback(&metadata, |_| {}).await.unwrap();
                         black_box(db.get_top_blobs(limit).await.unwrap())
                     }
                 });
@@ -119,7 +119,7 @@ fn bench_save_blob_metadata(c: &mut Criterion) {
             |b, metadata| {
                 b.to_async(common::tokio_executor()).iter(|| async {
                     let db = common::setup_bench_db().await;
-                    db.save_blob_metadata(metadata, None).await.unwrap();
+                    db.save_blob_metadata_with_callback(metadata, |_| {}).await.unwrap();
                     black_box(db)
                 });
             },
