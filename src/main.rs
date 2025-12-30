@@ -1,10 +1,3 @@
-mod model;
-mod repository;
-mod viewmodel;
-mod view;
-mod input;
-mod util;
-
 use anyhow::{Context, Result};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
@@ -17,11 +10,11 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io;
 
-use input::map_key_to_intent;
-use repository::{Database, GitScanner};
-use util::format_size;
-use viewmodel::{Action, AppViewModel, ViewMode};
-use view::{render_tree, render_extension, render_search, render_blobs};
+use repodiet::input::map_key_to_intent;
+use repodiet::repository::{Database, GitScanner};
+use repodiet::util::format_size;
+use repodiet::viewmodel::{Action, AppViewModel, ViewMode};
+use repodiet::view::{render_tree, render_extension, render_search, render_blobs};
 
 #[tokio::main]
 async fn main() -> Result<()> {
