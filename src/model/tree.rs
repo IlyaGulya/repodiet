@@ -49,21 +49,29 @@ impl TreeNode {
     }
 
     pub fn compute_totals(&mut self) {
+        // Always reset derived values so this is idempotent.
+        self.has_deleted_descendants = false;
+        self.deleted_size = 0;
+
         if self.children.is_empty() {
-            // Leaf node: compute deleted metrics directly
             let is_deleted = self.current_size == 0 && self.cumulative_size > 0;
             self.has_deleted_descendants = is_deleted;
             self.deleted_size = if is_deleted { self.cumulative_size } else { 0 };
-        } else {
-            // Directory: roll up from children
-            for child in self.children.values_mut() {
-                child.compute_totals();
-                self.cumulative_size += child.cumulative_size;
-                self.current_size += child.current_size;
-                self.blob_count += child.blob_count;
-                self.deleted_size += child.deleted_size;
-                self.has_deleted_descendants |= child.has_deleted_descendants;
-            }
+            return;
+        }
+
+        // Reset rollups for directories (leaf sizes were written directly to leaf nodes).
+        self.cumulative_size = 0;
+        self.current_size = 0;
+        self.blob_count = 0;
+
+        for child in self.children.values_mut() {
+            child.compute_totals();
+            self.cumulative_size += child.cumulative_size;
+            self.current_size += child.current_size;
+            self.blob_count += child.blob_count;
+            self.deleted_size += child.deleted_size;
+            self.has_deleted_descendants |= child.has_deleted_descendants;
         }
     }
 
