@@ -8,6 +8,10 @@ pub struct TreeNode {
     pub current_size: u64,
     pub blob_count: u64,
     pub children: HashMap<String, TreeNode>,
+    /// Precomputed: whether this node or any descendant has deleted files
+    pub has_deleted_descendants: bool,
+    /// Precomputed: cumulative size of only deleted content in this subtree
+    pub deleted_size: u64,
 }
 
 impl TreeNode {
@@ -18,6 +22,8 @@ impl TreeNode {
             current_size: 0,
             blob_count: 0,
             children: HashMap::new(),
+            has_deleted_descendants: false,
+            deleted_size: 0,
         }
     }
 
@@ -43,42 +49,36 @@ impl TreeNode {
     }
 
     pub fn compute_totals(&mut self) {
-        for child in self.children.values_mut() {
-            child.compute_totals();
-            self.cumulative_size += child.cumulative_size;
-            self.current_size += child.current_size;
-            self.blob_count += child.blob_count;
+        if self.children.is_empty() {
+            // Leaf node: compute deleted metrics directly
+            let is_deleted = self.current_size == 0 && self.cumulative_size > 0;
+            self.has_deleted_descendants = is_deleted;
+            self.deleted_size = if is_deleted { self.cumulative_size } else { 0 };
+        } else {
+            // Directory: roll up from children
+            for child in self.children.values_mut() {
+                child.compute_totals();
+                self.cumulative_size += child.cumulative_size;
+                self.current_size += child.current_size;
+                self.blob_count += child.blob_count;
+                self.deleted_size += child.deleted_size;
+                self.has_deleted_descendants |= child.has_deleted_descendants;
+            }
         }
     }
 
     /// Check if this node or any of its descendants contains deleted files
     /// (files with current_size == 0 but cumulative_size > 0)
+    #[inline]
     pub fn contains_deleted_files(&self) -> bool {
-        if self.children.is_empty() {
-            // Leaf node: check if it's a deleted file
-            self.current_size == 0 && self.cumulative_size > 0
-        } else {
-            // Directory: check if any child contains deleted files
-            self.children.values().any(|child| child.contains_deleted_files())
-        }
+        self.has_deleted_descendants
     }
 
-    /// Calculate the cumulative size of only deleted content
+    /// Get the cumulative size of only deleted content
     /// (files where current_size == 0 but cumulative_size > 0)
+    #[inline]
     pub fn deleted_cumulative_size(&self) -> u64 {
-        if self.children.is_empty() {
-            // Leaf node: return cumulative_size only if deleted
-            if self.current_size == 0 && self.cumulative_size > 0 {
-                self.cumulative_size
-            } else {
-                0
-            }
-        } else {
-            // Directory: sum deleted sizes of all children
-            self.children.values()
-                .map(|child| child.deleted_cumulative_size())
-                .sum()
-        }
+        self.deleted_size
     }
 }
 
