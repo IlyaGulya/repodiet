@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use crate::model::{ExtensionStats, TreeNode};
 
-use super::selection;
+use super::selection::Selectable;
 
 /// Computed stats for display
 #[derive(Debug, Clone)]
@@ -93,13 +93,19 @@ impl ExtensionViewModel {
     pub fn total_files(&self) -> u64 {
         self.total_files
     }
+}
 
-    pub fn move_up(&mut self) {
-        selection::move_up(&mut self.selected_index, self.stats.len());
+impl Selectable for ExtensionViewModel {
+    fn len(&self) -> usize {
+        self.stats.len()
     }
 
-    pub fn move_down(&mut self) {
-        selection::move_down(&mut self.selected_index, self.stats.len());
+    fn selected(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected(&mut self, index: usize) {
+        self.selected_index = index;
     }
 }
 

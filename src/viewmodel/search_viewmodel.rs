@@ -1,6 +1,6 @@
 use crate::model::{SearchResult, TreeNode};
 
-use super::selection;
+use super::selection::Selectable;
 
 /// ViewModel for search functionality
 pub struct SearchViewModel {
@@ -102,17 +102,23 @@ impl SearchViewModel {
         self.selected_index = 0;
     }
 
-    pub fn move_up(&mut self) {
-        selection::move_up(&mut self.selected_index, self.results.len());
-    }
-
-    pub fn move_down(&mut self) {
-        selection::move_down(&mut self.selected_index, self.results.len());
-    }
-
     /// Get selected result's path
     pub fn selected_path(&self) -> Option<&str> {
         self.results.get(self.selected_index).map(|r| r.path.as_str())
+    }
+}
+
+impl Selectable for SearchViewModel {
+    fn len(&self) -> usize {
+        self.results.len()
+    }
+
+    fn selected(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected(&mut self, index: usize) {
+        self.selected_index = index;
     }
 }
 

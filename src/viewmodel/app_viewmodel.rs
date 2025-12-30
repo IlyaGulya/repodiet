@@ -1,6 +1,7 @@
 use crate::model::{LargeBlobInfo, TreeNode};
 use crate::input::Intent;
 use super::{TreeViewModel, ExtensionViewModel, SearchViewModel, BlobsViewModel};
+use super::selection::Selectable;
 
 /// Current view mode
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -52,21 +53,13 @@ impl AppViewModel {
         self.view_mode == ViewMode::Search
     }
 
-    fn move_up_current(&mut self) {
+    /// Get the current selectable viewmodel based on view mode
+    fn current_selectable(&mut self) -> &mut dyn Selectable {
         match self.view_mode {
-            ViewMode::Tree => self.tree_vm.move_up(),
-            ViewMode::ByExtension => self.extension_vm.move_up(),
-            ViewMode::LargeBlobs => self.blobs_vm.move_up(),
-            ViewMode::Search => self.search_vm.move_up(),
-        }
-    }
-
-    fn move_down_current(&mut self) {
-        match self.view_mode {
-            ViewMode::Tree => self.tree_vm.move_down(),
-            ViewMode::ByExtension => self.extension_vm.move_down(),
-            ViewMode::LargeBlobs => self.blobs_vm.move_down(),
-            ViewMode::Search => self.search_vm.move_down(),
+            ViewMode::Tree => &mut self.tree_vm,
+            ViewMode::ByExtension => &mut self.extension_vm,
+            ViewMode::LargeBlobs => &mut self.blobs_vm,
+            ViewMode::Search => &mut self.search_vm,
         }
     }
 
@@ -120,12 +113,12 @@ impl AppViewModel {
             }
 
             Intent::MoveUp => {
-                self.move_up_current();
+                self.current_selectable().move_up();
                 Action::Redraw
             }
 
             Intent::MoveDown => {
-                self.move_down_current();
+                self.current_selectable().move_down();
                 Action::Redraw
             }
 

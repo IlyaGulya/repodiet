@@ -1,6 +1,6 @@
 use crate::model::LargeBlobInfo;
 
-use super::selection;
+use super::selection::Selectable;
 
 /// ViewModel for large blobs view
 pub struct BlobsViewModel {
@@ -34,17 +34,23 @@ impl BlobsViewModel {
         self.blobs.iter().map(|b| b.size).sum()
     }
 
-    pub fn move_up(&mut self) {
-        selection::move_up(&mut self.selected_index, self.blobs.len());
-    }
-
-    pub fn move_down(&mut self) {
-        selection::move_down(&mut self.selected_index, self.blobs.len());
-    }
-
     /// Get selected blob's path
     pub fn selected_path(&self) -> Option<&str> {
         self.blobs.get(self.selected_index).map(|b| b.path.as_str())
+    }
+}
+
+impl Selectable for BlobsViewModel {
+    fn len(&self) -> usize {
+        self.blobs.len()
+    }
+
+    fn selected(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected(&mut self, index: usize) {
+        self.selected_index = index;
     }
 }
 

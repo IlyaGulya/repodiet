@@ -1,5 +1,7 @@
 use crate::model::TreeNode;
 
+use super::selection::Selectable;
+
 /// View representation of a tree node for rendering
 #[derive(Debug, Clone)]
 pub struct TreeNodeView {
@@ -110,32 +112,6 @@ impl TreeViewModel {
         }
     }
 
-    // Navigation methods
-
-    pub fn move_up(&mut self) {
-        let children = self.visible_children();
-        if children.is_empty() {
-            return;
-        }
-        if self.selected_index == 0 {
-            self.selected_index = children.len() - 1;
-        } else {
-            self.selected_index -= 1;
-        }
-    }
-
-    pub fn move_down(&mut self) {
-        let children = self.visible_children();
-        if children.is_empty() {
-            return;
-        }
-        if self.selected_index >= children.len() - 1 {
-            self.selected_index = 0;
-        } else {
-            self.selected_index += 1;
-        }
-    }
-
     pub fn enter_selected(&mut self) {
         let children = self.visible_children();
         if let Some(child) = children.get(self.selected_index) {
@@ -171,6 +147,46 @@ impl TreeViewModel {
                 .map(|s| s.to_string())
                 .collect();
             self.selected_index = 0;
+        }
+    }
+}
+
+impl Selectable for TreeViewModel {
+    fn len(&self) -> usize {
+        self.visible_children().len()
+    }
+
+    fn selected(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected(&mut self, index: usize) {
+        self.selected_index = index;
+    }
+
+    // TreeViewModel needs custom implementations because visible_children()
+    // is calculated dynamically based on filters
+    fn move_up(&mut self) {
+        let len = self.visible_children().len();
+        if len == 0 {
+            return;
+        }
+        if self.selected_index == 0 {
+            self.selected_index = len - 1;
+        } else {
+            self.selected_index -= 1;
+        }
+    }
+
+    fn move_down(&mut self) {
+        let len = self.visible_children().len();
+        if len == 0 {
+            return;
+        }
+        if self.selected_index >= len - 1 {
+            self.selected_index = 0;
+        } else {
+            self.selected_index += 1;
         }
     }
 }
