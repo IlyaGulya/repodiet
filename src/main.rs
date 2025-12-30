@@ -1,4 +1,7 @@
+mod cli;
+
 use anyhow::{Context, Result};
+use clap::Parser;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
     execute,
@@ -18,18 +21,9 @@ use repodiet::view::{render_tree, render_extension, render_search, render_blobs}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-
-    // Check for --profile flag
-    let profile_mode = args.iter().any(|a| a == "--profile");
-
-    // Get repo path (first non-flag argument, or ".")
-    let repo_path = args.iter()
-        .skip(1)
-        .find(|a| !a.starts_with("--"))
-        .map(|s| s.as_str())
-        .unwrap_or(".")
-        .to_string();
+    let args = cli::Cli::parse();
+    let profile_mode = args.profile;
+    let repo_path = args.repo_path.to_str().unwrap_or(".").to_string();
 
     // Get cache directory - use temp dir for profile mode to get fresh scan
     let db_path = if profile_mode {
