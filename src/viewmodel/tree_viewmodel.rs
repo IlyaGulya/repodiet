@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use crate::model::TreeNode;
@@ -13,6 +14,11 @@ pub struct TreeNodeView {
     pub has_children: bool,
 }
 
+struct ChildrenCache {
+    children: Vec<TreeNodeView>,
+    dirty: bool,
+}
+
 /// ViewModel for tree navigation
 pub struct TreeViewModel {
     root: Arc<TreeNode>,
@@ -20,6 +26,7 @@ pub struct TreeViewModel {
     selected_index: usize,
     show_deleted_only: bool,
     total_cumulative: u64,
+    cache: RefCell<ChildrenCache>,
 }
 
 impl TreeViewModel {
@@ -31,6 +38,10 @@ impl TreeViewModel {
             selected_index: 0,
             show_deleted_only: false,
             total_cumulative,
+            cache: RefCell::new(ChildrenCache {
+                children: Vec::new(),
+                dirty: true,
+            }),
         }
     }
 
@@ -69,17 +80,24 @@ impl TreeViewModel {
         node
     }
 
-    /// Get visible children based on current filters
-    pub fn visible_children(&self) -> Vec<TreeNodeView> {
+    /// Invalidate the children cache and reset selection
+    fn invalidate(&mut self) {
+        self.cache.borrow_mut().dirty = true;
+        self.selected_index = 0;
+    }
+
+    /// Ensure the children cache is populated
+    fn ensure_children(&self) {
+        let mut cache = self.cache.borrow_mut();
+        if !cache.dirty {
+            return;
+        }
+
         let current = self.current_node();
-        let mut children: Vec<_> = current.children.values()
-            .filter(|node| {
-                if self.show_deleted_only {
-                    node.contains_deleted_files()
-                } else {
-                    true
-                }
-            })
+        let mut children: Vec<_> = current
+            .children
+            .values()
+            .filter(|node| !self.show_deleted_only || node.contains_deleted_files())
             .map(|node| {
                 let display_size = if self.show_deleted_only {
                     node.deleted_cumulative_size()
@@ -95,9 +113,15 @@ impl TreeViewModel {
             })
             .collect();
 
-        // Sort by display size
         children.sort_by(|a, b| b.display_size.cmp(&a.display_size));
-        children
+        cache.children = children;
+        cache.dirty = false;
+    }
+
+    /// Get visible children based on current filters
+    pub fn visible_children(&self) -> std::cell::Ref<'_, Vec<TreeNodeView>> {
+        self.ensure_children();
+        std::cell::Ref::map(self.cache.borrow(), |c| &c.children)
     }
 
     /// Get the selected index
@@ -115,12 +139,16 @@ impl TreeViewModel {
     }
 
     pub fn enter_selected(&mut self) {
-        let children = self.visible_children();
-        if let Some(child) = children.get(self.selected_index) {
-            if child.has_children {
-                self.path_stack.push(child.name.clone());
-                self.selected_index = 0;
-            }
+        let child_name = {
+            let children = self.visible_children();
+            children
+                .get(self.selected_index)
+                .filter(|c| c.has_children)
+                .map(|c| c.name.clone())
+        };
+        if let Some(name) = child_name {
+            self.path_stack.push(name);
+            self.invalidate();
         }
     }
 
@@ -130,14 +158,14 @@ impl TreeViewModel {
             false
         } else {
             self.path_stack.pop();
-            self.selected_index = 0;
+            self.invalidate();
             true
         }
     }
 
     pub fn toggle_deleted_only(&mut self) {
         self.show_deleted_only = !self.show_deleted_only;
-        self.selected_index = 0;
+        self.invalidate();
     }
 
     /// Navigate to a specific path (used by search results)
@@ -148,14 +176,15 @@ impl TreeViewModel {
                 .iter()
                 .map(|s| s.to_string())
                 .collect();
-            self.selected_index = 0;
+            self.invalidate();
         }
     }
 }
 
 impl Selectable for TreeViewModel {
     fn len(&self) -> usize {
-        self.visible_children().len()
+        self.ensure_children();
+        self.cache.borrow().children.len()
     }
 
     fn selected(&self) -> usize {
@@ -164,32 +193,6 @@ impl Selectable for TreeViewModel {
 
     fn set_selected(&mut self, index: usize) {
         self.selected_index = index;
-    }
-
-    // TreeViewModel needs custom implementations because visible_children()
-    // is calculated dynamically based on filters
-    fn move_up(&mut self) {
-        let len = self.visible_children().len();
-        if len == 0 {
-            return;
-        }
-        if self.selected_index == 0 {
-            self.selected_index = len - 1;
-        } else {
-            self.selected_index -= 1;
-        }
-    }
-
-    fn move_down(&mut self) {
-        let len = self.visible_children().len();
-        if len == 0 {
-            return;
-        }
-        if self.selected_index >= len - 1 {
-            self.selected_index = 0;
-        } else {
-            self.selected_index += 1;
-        }
     }
 }
 
@@ -217,8 +220,7 @@ mod tests {
         assert_eq!(vm.current_path(), "/");
 
         // Move to first child (sorted by size, so assets first)
-        let children = vm.visible_children();
-        assert!(!children.is_empty());
+        assert!(!vm.visible_children().is_empty());
 
         vm.enter_selected();
         assert!(!vm.is_at_root());
