@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::model::TreeNode;
 
 use super::selection::Selectable;
@@ -13,7 +15,7 @@ pub struct TreeNodeView {
 
 /// ViewModel for tree navigation
 pub struct TreeViewModel {
-    root: TreeNode,
+    root: Arc<TreeNode>,
     path_stack: Vec<String>,
     selected_index: usize,
     show_deleted_only: bool,
@@ -21,7 +23,7 @@ pub struct TreeViewModel {
 }
 
 impl TreeViewModel {
-    pub fn new(root: TreeNode) -> Self {
+    pub fn new(root: Arc<TreeNode>) -> Self {
         let total_cumulative = root.cumulative_size;
         Self {
             root,
@@ -58,7 +60,7 @@ impl TreeViewModel {
 
     /// Get the current node in the path
     pub fn current_node(&self) -> &TreeNode {
-        let mut node = &self.root;
+        let mut node: &TreeNode = &self.root;
         for name in &self.path_stack {
             if let Some(child) = node.children.get(name) {
                 node = child;
@@ -195,7 +197,7 @@ impl Selectable for TreeViewModel {
 mod tests {
     use super::*;
 
-    fn create_test_tree() -> TreeNode {
+    fn create_test_tree() -> Arc<TreeNode> {
         let mut root = TreeNode::new("(root)");
         root.add_path_with_sizes(&["src", "main.rs"], 1000, 500, 1);
         root.add_path_with_sizes(&["src", "lib.rs"], 800, 400, 1);
@@ -203,7 +205,7 @@ mod tests {
         root.add_path_with_sizes(&["assets", "icon.png"], 2000, 2000, 1);
         root.add_path_with_sizes(&["README.md"], 100, 100, 1);
         root.compute_totals();
-        root
+        Arc::new(root)
     }
 
     #[test]

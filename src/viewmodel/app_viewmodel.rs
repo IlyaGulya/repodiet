@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::model::{LargeBlobInfo, TreeNode};
 use crate::input::Intent;
 use super::{TreeViewModel, ExtensionViewModel, SearchViewModel, BlobsViewModel};
@@ -31,9 +33,10 @@ pub struct AppViewModel {
 impl AppViewModel {
     pub fn new(root: TreeNode, large_blobs: Vec<LargeBlobInfo>) -> Self {
         let total_cumulative = root.cumulative_size;
+        let root = Arc::new(root);
         let extension_vm = ExtensionViewModel::new(&root);
-        let search_vm = SearchViewModel::new(root.clone());
-        let tree_vm = TreeViewModel::new(root);
+        let search_vm = SearchViewModel::new(Arc::clone(&root));
+        let tree_vm = TreeViewModel::new(Arc::clone(&root));
         let blobs_vm = BlobsViewModel::new(large_blobs, total_cumulative);
 
         Self {

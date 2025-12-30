@@ -3,6 +3,7 @@
 
 mod common;
 
+use std::sync::Arc;
 use repodiet::repository::{Database, GitScanner};
 use repodiet::viewmodel::{TreeViewModel, SearchViewModel, BlobsViewModel};
 use tempfile::TempDir;
@@ -32,7 +33,7 @@ async fn test_full_scan_to_viewmodel() {
     let tree = scanner.scan(&db).await.unwrap();
 
     // Create TreeViewModel
-    let vm = TreeViewModel::new(tree);
+    let vm = TreeViewModel::new(Arc::new(tree));
 
     // Verify initial state
     assert!(vm.is_at_root());
@@ -67,7 +68,7 @@ async fn test_search_across_scanned_data() {
     let tree = scanner.scan(&db).await.unwrap();
 
     // Create SearchViewModel
-    let mut vm = SearchViewModel::new(tree);
+    let mut vm = SearchViewModel::new(Arc::new(tree));
 
     // Search for ".rs" files
     for c in ".rs".chars() {

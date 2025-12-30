@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::model::{SearchResult, TreeNode};
 
 use super::selection::Selectable;
@@ -7,12 +9,12 @@ pub struct SearchViewModel {
     query: String,
     results: Vec<SearchResult>,
     selected_index: usize,
-    root: TreeNode,
+    root: Arc<TreeNode>,
     total_cumulative: u64,
 }
 
 impl SearchViewModel {
-    pub fn new(root: TreeNode) -> Self {
+    pub fn new(root: Arc<TreeNode>) -> Self {
         let total_cumulative = root.cumulative_size;
         Self {
             query: String::new(),
@@ -126,13 +128,13 @@ impl Selectable for SearchViewModel {
 mod tests {
     use super::*;
 
-    fn create_test_tree() -> TreeNode {
+    fn create_test_tree() -> Arc<TreeNode> {
         let mut root = TreeNode::new("(root)");
         root.add_path_with_sizes(&["src", "main.rs"], 1000, 500, 1);
         root.add_path_with_sizes(&["src", "lib.rs"], 800, 400, 1);
         root.add_path_with_sizes(&["README.md"], 100, 100, 1);
         root.compute_totals();
-        root
+        Arc::new(root)
     }
 
     #[test]
