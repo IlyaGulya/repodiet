@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::model::{ExtensionStats, TreeNode};
+use crate::util::extension_label;
 
 use super::selection::Selectable;
 
@@ -41,13 +42,7 @@ impl ExtensionViewModel {
         let mut stats: HashMap<String, ExtensionStats> = HashMap::new();
 
         root.visit_leaf_nodes(|node| {
-            let ext = node
-                .name
-                .rsplit_once('.')
-                .map(|(_, e)| e)
-                .filter(|e| !e.is_empty() && e.len() <= 10 && !e.contains('/'))
-                .map(|e| format!(".{}", e.to_lowercase()))
-                .unwrap_or_else(|| "(no ext)".to_string());
+            let ext = extension_label(&node.name).into_owned();
 
             let entry = stats.entry(ext).or_default();
             entry.cumulative_size += node.cumulative_size;

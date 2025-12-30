@@ -5,6 +5,7 @@ mod common;
 
 use repodiet::model::ExtensionStats;
 use repodiet::repository::{BlobRecord, Database};
+use repodiet::util::extension_label;
 use std::collections::HashMap;
 
 /// Helper to create a 20-byte OID from a test identifier
@@ -153,11 +154,7 @@ async fn test_extension_stats_from_tree() {
 fn collect_extension_stats(node: &repodiet::model::TreeNode, stats: &mut HashMap<String, ExtensionStats>) {
     if node.children.is_empty() {
         // Leaf node - file
-        let ext = if let Some(dot_pos) = node.name.rfind('.') {
-            node.name[dot_pos..].to_string()
-        } else {
-            "(no ext)".to_string()
-        };
+        let ext = extension_label(&node.name).into_owned();
 
         let entry = stats.entry(ext).or_insert(ExtensionStats::default());
         entry.file_count += 1;
