@@ -75,7 +75,7 @@ async fn test_save_and_load_tree() {
         BlobRecord::new(test_oid(2), "src/lib.rs", 800, 400),
         BlobRecord::new(test_oid(3), "README.md", 200, 200),
     ];
-    db.save_blobs(&blobs, None).await.unwrap();
+    db.save_blobs_with_callback(&blobs, |_| {}).await.unwrap();
 
     // Load tree
     let tree = db.load_tree().await.unwrap();
@@ -103,13 +103,13 @@ async fn test_blob_conflict_handling() {
     let blobs1 = vec![
         BlobRecord::new(test_oid(1), "src/file.rs", 100, 50),
     ];
-    db.save_blobs(&blobs1, None).await.unwrap();
+    db.save_blobs_with_callback(&blobs1, |_| {}).await.unwrap();
 
     // Save another blob for the same path (simulating new version)
     let blobs2 = vec![
         BlobRecord::new(test_oid(2), "src/file.rs", 150, 75),
     ];
-    db.save_blobs(&blobs2, None).await.unwrap();
+    db.save_blobs_with_callback(&blobs2, |_| {}).await.unwrap();
 
     // Load tree - cumulative should accumulate, current should update
     let tree = db.load_tree().await.unwrap();
@@ -135,7 +135,7 @@ async fn test_top_blobs_sorted() {
         BlobMetaRecord::new(test_oid(3), 1000, "large.txt", "author", 1002),
         BlobMetaRecord::new(test_oid(4), 250, "small2.txt", "author", 1003),
     ];
-    db.save_blob_metadata(&metadata, None).await.unwrap();
+    db.save_blob_metadata_with_callback(&metadata, |_| {}).await.unwrap();
 
     // Get top 3 blobs
     let top = db.get_top_blobs(3).await.unwrap();
@@ -163,7 +163,7 @@ async fn test_seen_blobs_tracking() {
         BlobRecord::new(test_oid(1), "file1.txt", 100, 100),
         BlobRecord::new(test_oid(2), "file2.txt", 200, 200),
     ];
-    db.save_blobs(&blobs, None).await.unwrap();
+    db.save_blobs_with_callback(&blobs, |_| {}).await.unwrap();
 
     // Load seen blobs
     let seen = db.load_seen_blobs().await.unwrap();
@@ -175,7 +175,7 @@ async fn test_seen_blobs_tracking() {
     let blobs2 = vec![
         BlobRecord::new(test_oid(1), "file1.txt", 50, 50),
     ];
-    db.save_blobs(&blobs2, None).await.unwrap();
+    db.save_blobs_with_callback(&blobs2, |_| {}).await.unwrap();
 
     let seen = db.load_seen_blobs().await.unwrap();
     assert_eq!(seen.len(), 2); // Still 2, not 3

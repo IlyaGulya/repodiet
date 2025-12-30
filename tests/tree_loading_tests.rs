@@ -33,7 +33,7 @@ async fn test_tree_hierarchy_from_db() {
         BlobRecord::new(test_oid(4), "tests/test.rs", 75, 75),
         BlobRecord::new(test_oid(5), "README.md", 25, 25),
     ];
-    db.save_blobs(&blobs, None).await.unwrap();
+    db.save_blobs_with_callback(&blobs, |_| {}).await.unwrap();
 
     let tree = db.load_tree().await.unwrap();
 
@@ -63,7 +63,7 @@ async fn test_size_aggregation_on_load() {
         BlobRecord::new(test_oid(2), "src/b.rs", 200, 100),
         BlobRecord::new(test_oid(3), "src/sub/c.rs", 300, 150),
     ];
-    db.save_blobs(&blobs, None).await.unwrap();
+    db.save_blobs_with_callback(&blobs, |_| {}).await.unwrap();
 
     let tree = db.load_tree().await.unwrap();
 
@@ -92,7 +92,7 @@ async fn test_deleted_files_marked() {
         BlobRecord::new(test_oid(2), "deleted.txt", 200, 0),
         BlobRecord::new(test_oid(3), "src/also_deleted.rs", 300, 0),
     ];
-    db.save_blobs(&blobs, None).await.unwrap();
+    db.save_blobs_with_callback(&blobs, |_| {}).await.unwrap();
 
     let tree = db.load_tree().await.unwrap();
 
@@ -125,7 +125,7 @@ async fn test_extension_stats_from_tree() {
         BlobRecord::new(test_oid(5), "README.md", 50, 50),
         BlobRecord::new(test_oid(6), "Makefile", 25, 25), // No extension
     ];
-    db.save_blobs(&blobs, None).await.unwrap();
+    db.save_blobs_with_callback(&blobs, |_| {}).await.unwrap();
 
     let tree = db.load_tree().await.unwrap();
 

@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use indicatif::ProgressBar;
 use sqlx::{sqlite::{SqliteConnectOptions, SqlitePoolOptions}, Pool, QueryBuilder, Row, Sqlite, Transaction};
 use std::borrow::Cow;
 use std::str::FromStr;
@@ -268,26 +267,6 @@ impl Database {
                 v.try_into().ok()
             })
             .collect())
-    }
-
-    /// Save batch of new blobs using multi-row INSERT for speed
-    #[allow(dead_code)]
-    pub async fn save_blobs(&self, blobs: &[BlobRecord<'_>], progress: Option<&ProgressBar>) -> Result<()> {
-        self.save_blobs_with_callback(blobs, |n| {
-            if let Some(pb) = progress {
-                pb.inc(n as u64);
-            }
-        }).await
-    }
-
-    /// Save blob metadata for large blob detection using multi-row INSERT
-    #[allow(dead_code)]
-    pub async fn save_blob_metadata(&self, metadata: &[BlobMetaRecord<'_>], progress: Option<&ProgressBar>) -> Result<()> {
-        self.save_blob_metadata_with_callback(metadata, |n| {
-            if let Some(pb) = progress {
-                pb.inc(n as u64);
-            }
-        }).await
     }
 
     /// Save batch of new blobs with a callback for progress
